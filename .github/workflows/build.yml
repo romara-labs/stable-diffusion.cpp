@@ -208,7 +208,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake .. -DCMAKE_CXX_FLAGS='/bigobj' -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe ${{ matrix.defines }}
+          cmake .. -DCMAKE_CXX_FLAGS='/bigobj /EHsc /DWIN32_LEAN_AND_MEAN' -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe ${{ matrix.defines }}
           cmake --build . --config Release
 
       - name: Check AVX512F support
