@@ -42,6 +42,16 @@ jobs:
   ubuntu-latest-cmake:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        include:
+          - build: "cpu"
+            defines: "-DGGML_AVX2=ON -DSD_BUILD_SHARED_LIBS=ON"
+          - build: "vulkan"
+            defines: "-DSD_VULKAN=ON -DSD_BUILD_SHARED_LIBS=ON"
+          - build: "cuda12"
+            defines: "-DSD_CUDA=ON -DSD_BUILD_SHARED_LIBS=ON -DCMAKE_CUDA_ARCHITECTURES='61;70;75;80;86;89;90;100;120'"
+
     steps:
       - name: Clone
         id: checkout
@@ -49,18 +59,30 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Dependencies
+      - name: Dependencies (Common)
         id: depends
         run: |
           sudo apt-get update
-          sudo apt-get install build-essential
+          sudo apt-get install -y build-essential cmake
+
+      - name: Dependencies (Vulkan)
+        if: ${{ matrix.build == 'vulkan' }}
+        run: |
+          sudo apt-get install -y libvulkan-dev vulkan-tools
+
+      - name: Install cuda-toolkit
+        if: ${{ matrix.build == 'cuda12' }}
+        uses: Jimver/cuda-toolkit@v0.2.22
+        with:
+          cuda: "12.8.1"
+          method: "network"
 
       - name: Build
         id: cmake_build
         run: |
           mkdir build
           cd build
-          cmake .. -DGGML_AVX2=ON -DSD_BUILD_SHARED_LIBS=ON
+          cmake .. ${{ matrix.defines }}
           cmake --build . --config Release
 
       - name: Get commit hash
@@ -82,15 +104,14 @@ jobs:
         run: |
           cp ggml/LICENSE ./build/bin/ggml.txt
           cp LICENSE ./build/bin/stable-diffusion.cpp.txt
-          zip -j sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-${{ steps.system-info.outputs.OS_TYPE }}-${{ steps.system-info.outputs.OS_NAME }}-${{ steps.system-info.outputs.OS_VERSION }}-${{ steps.system-info.outputs.CPU_ARCH }}.zip ./build/bin/*
+          zip -j sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-linux-${{ matrix.build }}-${{ steps.system-info.outputs.CPU_ARCH }}.zip ./build/bin/*
 
       - name: Upload artifacts
         if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-${{ steps.system-info.outputs.OS_TYPE }}-${{ steps.system-info.outputs.OS_NAME }}-${{ steps.system-info.outputs.OS_VERSION }}-${{ steps.system-info.outputs.CPU_ARCH }}.zip
-          path: |
-            sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-${{ steps.system-info.outputs.OS_TYPE }}-${{ steps.system-info.outputs.OS_NAME }}-${{ steps.system-info.outputs.OS_VERSION }}-${{ steps.system-info.outputs.CPU_ARCH }}.zip
+          name: sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-linux-${{ matrix.build }}-${{ steps.system-info.outputs.CPU_ARCH }}
+          path: "*.zip"
 
   macOS-latest-cmake:
     runs-on: macos-latest
