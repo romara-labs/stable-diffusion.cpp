@@ -68,7 +68,8 @@ jobs:
       - name: Dependencies (Vulkan)
         if: ${{ matrix.build == 'vulkan' }}
         run: |
-          sudo apt-get install -y libvulkan-dev vulkan-tools glslang-tools
+          sudo apt-get update
+          sudo apt-get install -y glslc libvulkan-dev vulkan-tools
 
       - name: Install cuda-toolkit
         if: ${{ matrix.build == 'cuda12' }}
@@ -221,7 +222,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake .. -DCMAKE_CXX_FLAGS='/bigobj /EHsc' -DCMAKE_C_FLAGS='/D_WINSOCKAPI_' -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe ${{ matrix.defines }}
+          cmake .. -DCMAKE_CXX_FLAGS='/bigobj /EHsc' -DCMAKE_C_FLAGS='/DWIN32_LEAN_AND_MEAN /D_WINSOCKAPI_' -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe ${{ matrix.defines }}
           cmake --build . --config Release
 
       - name: Check AVX512F support
