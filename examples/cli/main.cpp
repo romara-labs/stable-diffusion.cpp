@@ -3,21 +3,14 @@
 #include <time.h>
 #include <cctype>
 #include <filesystem>
-#include <functional>
 #include <iostream>
-#include <map>
-#include <random>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <vector>
-
-// #include "preprocessing.hpp"
-#include "stable-diffusion.h"
-
-#include "common/common.hpp"
-
+#include "../common/common.hpp"
 #include "avi_writer.h"
+#include "stable-diffusion.h"
 
 const char* previews_str[] = {
     "none",

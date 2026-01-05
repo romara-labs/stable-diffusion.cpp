@@ -1,26 +1,18 @@
-// main.cpp
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <sstream>
 #include <vector>
-
-#include "../../stable-diffusion.h"
-#include "../../thirdparty/httplib.h"
-
 #include "../common/common.hpp"
-
-// O json.hpp já está incluído via stable-diffusion.h
-
-// Includes para SSE
-#include <atomic>
-#include <condition_variable>
+#include "httplib.h"
+#include "stable-diffusion.h"
 
 namespace fs = std::filesystem;
 
-// ----------------------- helpers -----------------------
 static const std::string base64_chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
@@ -188,22 +180,19 @@ struct SDSvrParams {
     }
 };
 
-// Estrutura para manter estado do progresso SSE
 struct ProgressState {
-    httplib::DataSink* sse_sink = nullptr;     // Canal de comunicação SSE
-    std::atomic<bool> is_generating{false};    // Flag de controle
-    std::atomic<bool> generation_done{false};  // Flag para indicar conclusão
-    std::mutex state_mutex;                    // Mutex para proteção
-    std::condition_variable cv;                // Para sincronização se necessário
+    httplib::DataSink* sse_sink = nullptr;
+    std::atomic<bool> is_generating{false};
+    std::atomic<bool> generation_done{false};
+    std::mutex state_mutex;
+    std::condition_variable cv;
 
-    // Método para verificar se geração foi concluída
     bool wait_for_completion(int timeout_ms = 30000) {
         std::unique_lock<std::mutex> lock(state_mutex);
         return cv.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                            [this] { return generation_done.load(); });
     }
 
-    // Método para sinalizar conclusão
     void signal_completion() {
         {
             std::lock_guard<std::mutex> lock(state_mutex);
@@ -297,7 +286,7 @@ std::vector<uint8_t> write_image_to_vector(
     }
 
     if (!result) {
-        throw std::runtime_error("write imgage to mem failed");
+        throw std::runtime_error("write image to mem failed");
     }
 
     return buffer;
@@ -308,20 +297,16 @@ void sd_log_cb(enum sd_log_level_t level, const char* log, void* data) {
     log_print(level, log, svr_params->verbose, svr_params->color);
 }
 
-// Callback SSE para progresso da geração
 void progress_callback_sse(int step, int steps, float time, void* data) {
     ProgressState* state = static_cast<ProgressState*>(data);
 
-    // Verificações de segurança
     if (!state || !state->sse_sink || !state->is_generating.load()) {
         return;
     }
 
-    // Cálculo do progresso
     float percentage = steps > 0 ? (float)step / (float)steps * 100.0f : 0.0f;
     float eta        = steps > step ? (steps - step) * time : 0.0f;
 
-    // Montar payload JSON com todos os dados de progresso
     json progress_data;
     progress_data["step"]          = step;
     progress_data["total_steps"]   = steps;
@@ -329,24 +314,20 @@ void progress_callback_sse(int step, int steps, float time, void* data) {
     progress_data["time_per_step"] = time;
     progress_data["eta"]           = eta;
 
-    // Adicionar timestamp para clientes que precisam
     progress_data["timestamp"] = std::time(nullptr);
 
-    // Formatar como evento SSE
     std::stringstream ss;
     ss << "data: " << progress_data.dump() << "\n\n";
     std::string event = ss.str();
 
-    // Envia evento SSE de forma segura
     {
         std::lock_guard<std::mutex> lock(state->state_mutex);
         if (state->sse_sink && state->is_generating) {
             state->sse_sink->write(event.c_str(), event.length());
-            state->sse_sink->write("\n", 1);  // Flush extra se necessário
+            state->sse_sink->write("\n", 1);
         }
     }
 
-    // Sinaliza conclusão quando chegar ao fim
     if (step >= steps) {
         state->signal_completion();
     }
@@ -401,7 +382,6 @@ int main(int argc, const char** argv) {
         return httplib::Server::HandlerResponse::Unhandled;
     });
 
-    // health
     svr.Get("/", [&](const httplib::Request&, httplib::Response& res) {
         if (!svr_params.serve_html_path.empty()) {
             std::ifstream file(svr_params.serve_html_path);
@@ -417,7 +397,6 @@ int main(int argc, const char** argv) {
         }
     });
 
-    // models endpoint (minimal)
     svr.Get("/v1/models", [&](const httplib::Request&, httplib::Response& res) {
         json r;
         r["data"] = json::array();
@@ -425,13 +404,11 @@ int main(int argc, const char** argv) {
         res.set_content(r.dump(), "application/json");
     });
 
-    // Endpoint UNIFICADO: Geração de Imagens (Síncrono OU Streaming)
     svr.Post("/v1/images/generations", [&](const httplib::Request& req, httplib::Response& res) {
         json j;
         bool is_stream = false;
 
         try {
-            // 1. Validação básica da requisição
             if (req.body.empty()) {
                 res.status = 400;
                 res.set_content(R"({"error":"empty body"})", "application/json");
@@ -447,7 +424,6 @@ int main(int argc, const char** argv) {
             }
             is_stream = j.value("stream", false);
 
-            // 2. Extrair parâmetros básicos do JSON
             std::string prompt = j.value("prompt", "");
             if (prompt.empty()) {
                 res.status = 400;
@@ -455,7 +431,6 @@ int main(int argc, const char** argv) {
                 return;
             }
 
-            // 4. Extrair parâmetros comuns
             std::string negative_prompt = j.value("negative_prompt", "");
             std::string size            = j.value("size", "512x512");
             int width = 512, height = 512;
@@ -480,33 +455,23 @@ int main(int argc, const char** argv) {
             }
 
             if (is_stream) {
-                // =======================================================
-                // MODO STREAMING SSE
-                // =======================================================
-
-                // Configurar headers para SSE
                 res.set_header("Content-Type", "text/event-stream");
                 res.set_header("Cache-Control", "no-cache");
-                res.set_header("Connection", "close");  // Force close to avoid keep-alive issues with requests
+                res.set_header("Connection", "close");
                 res.set_header("Access-Control-Allow-Origin", "*");
 
-                // Configurar content provider para streaming
                 res.set_chunked_content_provider(
                     "text/event-stream",
                     [=, &svr_params, &ctx_params, &default_gen_params, &sd_ctx_mutex](size_t offset, httplib::DataSink& sink) mutable -> bool {
-                        // Executar apenas uma vez
                         if (offset > 0)
                             return false;
 
                         try {
-                            // Enviar evento inicial
                             sink.write("data: {\"status\":\"starting\"}\n\n", 29);
 
-                            // Processar <sd_cpp_extra_args> do prompt se existirem
                             std::string processed_prompt = prompt;
                             std::string extra_args       = extract_and_remove_sd_cpp_extra_args(processed_prompt);
 
-                            // Configurar parâmetros de geração
                             SDGenerationParams gen_params = default_gen_params;
                             gen_params.prompt             = processed_prompt;
                             gen_params.width              = width;
@@ -514,7 +479,6 @@ int main(int argc, const char** argv) {
                             gen_params.batch_count        = n;
                             gen_params.negative_prompt    = negative_prompt;
 
-                            // Aplicar parâmetros extras do prompt se existirem
                             if (!extra_args.empty()) {
                                 if (!gen_params.from_json_str(extra_args)) {
                                     sink.write("data: {\"error\":\"invalid sd_cpp_extra_args\"}\n\n", 48);
@@ -522,7 +486,6 @@ int main(int argc, const char** argv) {
                                 }
                             }
 
-                            // Sobrescrever com parâmetros explícitos do JSON (maior prioridade)
                             if (j.contains("seed") && j["seed"] >= 0)
                                 gen_params.seed = j["seed"];
                             if (j.contains("steps"))
@@ -532,13 +495,11 @@ int main(int argc, const char** argv) {
                             if (j.contains("negative_prompt"))
                                 gen_params.negative_prompt = j["negative_prompt"];
 
-                            // Validar parâmetros
                             if (!gen_params.process_and_check(IMG_GEN, ctx_params.lora_model_dir)) {
                                 sink.write("data: {\"error\":\"invalid generation params\"}\n\n", 50);
                                 return true;
                             }
 
-                            // Preparar estruturas para geração
                             sd_image_t init_image    = {(uint32_t)width, (uint32_t)height, 3, nullptr};
                             sd_image_t control_image = {(uint32_t)width, (uint32_t)height, 3, nullptr};
                             sd_image_t mask_image    = {(uint32_t)width, (uint32_t)height, 1, nullptr};
@@ -574,7 +535,6 @@ int main(int argc, const char** argv) {
                                 gen_params.cache_params,
                             };
 
-                            // Configurar estado e callback SSE
                             ProgressState progress_state;
                             progress_state.sse_sink      = &sink;
                             progress_state.is_generating = true;
@@ -582,23 +542,19 @@ int main(int argc, const char** argv) {
                             sd_image_t* results = nullptr;
                             int num_results     = 0;
 
-                            // Gerar imagem com proteção de mutex
                             {
                                 std::lock_guard<std::mutex> lock(sd_ctx_mutex);
 
-                                // Registrar callback DENTRO do lock para segurança
                                 sd_set_progress_callback(progress_callback_sse, &progress_state);
 
                                 results     = generate_image(sd_ctx, &img_gen_params);
                                 num_results = gen_params.batch_count;
 
-                                // Limpar callback DENTRO do lock
                                 sd_set_progress_callback(nullptr, nullptr);
                             }
 
                             progress_state.is_generating = false;
 
-                            // Enviar resultado final
                             if (results) {
                                 json final_data;
                                 final_data["created"]       = iso_timestamp_now();
@@ -628,10 +584,8 @@ int main(int argc, const char** argv) {
                                 std::string final_msg = "data: " + final_data.dump() + "\n\n";
                                 sink.write(final_msg.c_str(), final_msg.length());
 
-                                // Evento de conclusão
                                 sink.write("data: [DONE]\n\n", 14);
 
-                                // Free memory
                                 for (int i = 0; i < num_results; i++) {
                                     if (results[i].data)
                                         free(results[i].data);
@@ -650,10 +604,6 @@ int main(int argc, const char** argv) {
                     });
 
             } else {
-                // =======================================================
-                // MODO SÍNCRONO PADRÃO (código original)
-                // =======================================================
-
                 std::string sd_cpp_extra_args_str = extract_and_remove_sd_cpp_extra_args(prompt);
 
                 json out;
@@ -674,7 +624,6 @@ int main(int argc, const char** argv) {
                     return;
                 }
 
-                // Sobrescrever com parâmetros explícitos do JSON (maior prioridade)
                 if (j.contains("seed") && j["seed"] >= 0)
                     gen_params.seed = j["seed"];
                 if (j.contains("steps"))
@@ -762,7 +711,6 @@ int main(int argc, const char** argv) {
                 res.status = 200;
             }
 
-            // Tratamento de erros para modo síncrono
         } catch (const std::exception& e) {
             if (!is_stream) {
                 res.status = 500;
@@ -771,7 +719,6 @@ int main(int argc, const char** argv) {
                 err["message"] = e.what();
                 res.set_content(err.dump(), "application/json");
             }
-            // Em modo streaming, o erro é tratado na thread
         }
     });
 
@@ -940,7 +887,7 @@ int main(int argc, const char** argv) {
                     (int)pmid_images.size(),
                     gen_params.pm_id_embed_path.c_str(),
                     gen_params.pm_style_strength,
-                },  // pm_params
+                },
                 ctx_params.vae_tiling_params,
                 gen_params.cache_params,
             };
@@ -998,7 +945,6 @@ int main(int argc, const char** argv) {
     LOG_INFO("listening on: %s:%d\n", svr_params.listen_ip.c_str(), svr_params.listen_port);
     svr.listen(svr_params.listen_ip, svr_params.listen_port);
 
-    // cleanup
     free_sd_ctx(sd_ctx);
     return 0;
 }
