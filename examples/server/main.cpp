@@ -83,6 +83,21 @@ std::vector<uint8_t> base64_decode(const std::string& encoded_string) {
     return ret;
 }
 
+std::string iso_timestamp_now() {
+    using namespace std::chrono;
+    auto now      = system_clock::now();
+    std::time_t t = system_clock::to_time_t(now);
+    std::tm tm{};
+#ifdef _MSC_VER
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+    return oss.str();
+}
+
 struct SDSvrParams {
     std::string listen_ip = "127.0.0.1";
     int listen_port       = 6666;
