@@ -870,7 +870,6 @@ int main(int argc, const char** argv) {
                 return;
             }
 
-            if (!gen_params.process_and_check(IMG_GEN, ctx_params.lora_model_dir)) {
             if (gen_params.sample_params.sample_steps > 100)
                 gen_params.sample_params.sample_steps = 100;
 
