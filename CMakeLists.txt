@@ -11,6 +11,10 @@ endif()
 if (MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
     add_compile_definitions(_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:C>:/MP>
+        $<$<COMPILE_LANGUAGE:CXX>:/MP>
+    )
 endif()
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -22,6 +26,26 @@ else()
     set(SD_STANDALONE OFF)
 endif()
 
+set(SD_SUBMODULE_WEBP FALSE)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libwebp/CMakeLists.txt")
+    set(SD_SUBMODULE_WEBP TRUE)
+endif()
+if(SD_SUBMODULE_WEBP)
+    set(SD_WEBP_DEFAULT ON)
+else()
+    set(SD_WEBP_DEFAULT ${SD_USE_SYSTEM_WEBP})
+endif()
+
+set(SD_SUBMODULE_WEBM FALSE)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libwebm/CMakeLists.txt")
+    set(SD_SUBMODULE_WEBM TRUE)
+endif()
+if(SD_SUBMODULE_WEBM)
+    set(SD_WEBM_DEFAULT ON)
+else()
+    set(SD_WEBM_DEFAULT ${SD_USE_SYSTEM_WEBM})
+endif()
+
 #
 # Option list
 #
@@ -29,6 +53,10 @@ endif()
 # general
 #option(SD_BUILD_TESTS                "sd: build tests"    ${SD_STANDALONE})
 option(SD_BUILD_EXAMPLES             "sd: build examples" ${SD_STANDALONE})
+option(SD_WEBP                       "sd: enable WebP image I/O support" ${SD_WEBP_DEFAULT})
+option(SD_USE_SYSTEM_WEBP            "sd: link against system libwebp" OFF)
+option(SD_WEBM                       "sd: enable WebM video output support" ${SD_WEBM_DEFAULT})
+option(SD_USE_SYSTEM_WEBM            "sd: link against system libwebm" OFF)
 option(SD_CUDA                       "sd: cuda backend" OFF)
 option(SD_HIPBLAS                    "sd: rocm backend" OFF)
 option(SD_METAL                      "sd: metal backend" OFF)
@@ -36,7 +64,6 @@ option(SD_VULKAN                     "sd: vulkan backend" OFF)
 option(SD_OPENCL                     "sd: opencl backend" OFF)
 option(SD_SYCL                       "sd: sycl backend" OFF)
 option(SD_MUSA                       "sd: musa backend" OFF)
-option(SD_FAST_SOFTMAX               "sd: x1.5 faster softmax, indeterministic (sometimes, same seed don't generate same image), cuda only" OFF)
 option(SD_BUILD_SHARED_LIBS          "sd: build shared libs" OFF)
 option(SD_BUILD_SHARED_GGML_LIB      "sd: build ggml as a separate shared lib" OFF)
 option(SD_USE_SYSTEM_GGML            "sd: use system-installed GGML library" OFF)
@@ -45,53 +72,94 @@ option(SD_USE_SYSTEM_GGML            "sd: use system-installed GGML library" OFF
 if(SD_CUDA)
     message("-- Use CUDA as backend stable-diffusion")
     set(GGML_CUDA ON)
-    add_definitions(-DSD_USE_CUDA)
 endif()
 
 if(SD_METAL)
     message("-- Use Metal as backend stable-diffusion")
     set(GGML_METAL ON)
-    add_definitions(-DSD_USE_METAL)
 endif()
 
 if (SD_VULKAN)
     message("-- Use Vulkan as backend stable-diffusion")
     set(GGML_VULKAN ON)
-    add_definitions(-DSD_USE_VULKAN)
 endif ()
 
 if (SD_OPENCL)
     message("-- Use OpenCL as backend stable-diffusion")
     set(GGML_OPENCL ON)
-    add_definitions(-DSD_USE_OPENCL)
 endif ()
 
 if (SD_HIPBLAS)
     message("-- Use HIPBLAS as backend stable-diffusion")
     set(GGML_HIP ON)
-    add_definitions(-DSD_USE_CUDA)
-    if(SD_FAST_SOFTMAX)
-        set(GGML_CUDA_FAST_SOFTMAX ON)
-    endif()
 endif ()
 
 if(SD_MUSA)
     message("-- Use MUSA as backend stable-diffusion")
     set(GGML_MUSA ON)
-    add_definitions(-DSD_USE_CUDA)
-    if(SD_FAST_SOFTMAX)
-        set(GGML_CUDA_FAST_SOFTMAX ON)
+endif()
+
+if(SD_WEBP)
+    if(NOT SD_SUBMODULE_WEBP AND NOT SD_USE_SYSTEM_WEBP)
+        message(FATAL_ERROR "WebP support enabled but no source found.
+          Either initialize the submodule:\n  git submodule update --init thirdparty/libwebp\n\n"
+          "Or link against system library:\n  cmake (...) -DSD_USE_SYSTEM_WEBP=ON")
+    endif()
+    if(SD_USE_SYSTEM_WEBP)
+        find_package(WebP REQUIRED)
+        add_library(webp ALIAS WebP::webp)
+        # libwebp CMake target naming is not consistent across versions/distros.
+        # Some export WebP::libwebpmux, others export WebP::webpmux.
+        if(TARGET WebP::libwebpmux)
+            add_library(libwebpmux ALIAS WebP::libwebpmux)
+        elseif(TARGET WebP::webpmux)
+            add_library(libwebpmux ALIAS WebP::webpmux)
+        else()
+            message(FATAL_ERROR
+                "Could not find a compatible webpmux target in system WebP package. "
+                "Expected WebP::libwebpmux or WebP::webpmux."
+            )
+        endif()
+    endif()
+endif()
+
+if(SD_WEBM)
+    if(NOT SD_WEBP)
+        message(FATAL_ERROR "SD_WEBM requires SD_WEBP because WebM output reuses libwebp VP8 encoding.")
+    endif()
+    if(NOT SD_SUBMODULE_WEBM AND NOT SD_USE_SYSTEM_WEBM)
+        message(FATAL_ERROR "WebM support enabled but no source found.
+          Either initialize the submodule:\n  git submodule update --init thirdparty/libwebm\n\n"
+          "Or link against system library:\n  cmake (...) -DSD_USE_SYSTEM_WEBM=ON")
+    endif()
+    if(SD_USE_SYSTEM_WEBM)
+        find_path(WEBM_INCLUDE_DIR
+            NAMES mkvmuxer/mkvmuxer.h mkvparser/mkvparser.h common/webmids.h
+            PATH_SUFFIXES webm
+            REQUIRED)
+        find_library(WEBM_LIBRARY
+            NAMES webm libwebm
+            REQUIRED)
+
+        add_library(webm UNKNOWN IMPORTED)
+        set_target_properties(webm PROPERTIES
+            IMPORTED_LOCATION "${WEBM_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${WEBM_INCLUDE_DIR}")
     endif()
 endif()
 
 set(SD_LIB stable-diffusion)
 
-file(GLOB SD_LIB_SOURCES
+file(GLOB SD_LIB_SOURCES CONFIGURE_DEPENDS
     "src/*.h"
     "src/*.cpp"
     "src/*.hpp"
-    "src/vocab/*.h"
-    "src/vocab/*.cpp"
+    "src/model_io/*.h"
+    "src/model_io/*.cpp"
+    "src/tokenizers/*.h"
+    "src/tokenizers/*.cpp"
+    "src/tokenizers/vocab/*.h"
+    "src/tokenizers/vocab/*.cpp"
 )
 
 find_program(GIT_EXE NAMES git git.exe NO_CMAKE_FIND_ROOT_PATH)
@@ -148,7 +216,6 @@ if(SD_SYCL)
     message("-- Use SYCL as backend stable-diffusion")
     set(GGML_SYCL ON)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-narrowing -fsycl")
-    add_definitions(-DSD_USE_SYCL)
     # disable fast-math on host, see:
     # https://www.intel.com/content/www/us/en/docs/cpp-compiler/developer-guide-reference/2021-10/fp-model-fp.html
     if (WIN32)
@@ -184,7 +251,7 @@ endif()
 add_subdirectory(thirdparty)
 
 target_link_libraries(${SD_LIB} PUBLIC ggml zip)
-target_include_directories(${SD_LIB} PUBLIC . include)
+target_include_directories(${SD_LIB} PUBLIC . src include)
 target_include_directories(${SD_LIB} PUBLIC . thirdparty)
 target_compile_features(${SD_LIB} PUBLIC c_std_11 cxx_std_17)
 
