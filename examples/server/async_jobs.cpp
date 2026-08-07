@@ -10,6 +10,25 @@
 #include "common/media_io.h"
 #include "common/resource_owners.hpp"
 
+class SDProgressCallbackScope {
+private:
+    bool enabled_ = false;
+
+public:
+    SDProgressCallbackScope(sd_progress_cb_t callback, void* data)
+        : enabled_(callback != nullptr) {
+        if (enabled_) {
+            sd_set_progress_callback(callback, data);
+        }
+    }
+
+    ~SDProgressCallbackScope() {
+        if (enabled_) {
+            sd_set_progress_callback(nullptr, nullptr);
+        }
+    }
+};
+
 const char* async_job_kind_name(AsyncJobKind kind) {
     switch (kind) {
         case AsyncJobKind::ImgGen:
@@ -235,7 +254,9 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
                          std::string& output_media_mime_type,
                          int& output_frame_count,
                          int& output_fps,
-                         std::string& error_message) {
+                         std::string& error_message,
+                         sd_progress_cb_t progress_callback,
+                         void* progress_callback_data) {
     sd_vid_gen_params_t params = job.vid_gen.to_sd_vid_gen_params_t();
 
     SDImageVec results;
@@ -244,6 +265,7 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
 
     {
         std::lock_guard<std::mutex> lock(*runtime.sd_ctx_mutex);
+        SDProgressCallbackScope progress_scope(progress_callback, progress_callback_data);
         sd_image_t* raw_results = nullptr;
         if (!generate_video(runtime.sd_ctx, &params, &raw_results, &num_results, &generated_audio)) {
             raw_results = nullptr;

@@ -74,5 +74,7 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
                          std::string& output_media_mime_type,
                          int& output_frame_count,
                          int& output_fps,
-                         std::string& error_message);
+                         std::string& error_message,
+                         sd_progress_cb_t progress_callback = nullptr,
+                         void* progress_callback_data       = nullptr);
 void async_job_worker(ServerRuntime& runtime);
