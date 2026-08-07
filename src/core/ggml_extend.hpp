@@ -1689,6 +1689,8 @@ struct GGMLRunnerContext {
     bool conv2d_direct_enabled                                       = false;
     bool circular_x_enabled                                          = false;
     bool circular_y_enabled                                          = false;
+    ggml_tensor* ip_context                                          = nullptr;
+    float ip_scale                                                   = 1.0f;
     std::shared_ptr<WeightAdapter> weight_adapter                    = nullptr;
     std::vector<std::pair<ggml_tensor*, std::string>>* debug_tensors = nullptr;
     std::function<ggml_tensor*(const std::string&)> get_cache_tensor;
@@ -1751,7 +1753,7 @@ protected:
     std::vector<size_t> graph_cut_layer_split_backend_vram_limits_;
 
     std::vector<ggml_backend_t> extra_runtime_backends;  // borrowed (SDBackendManager-owned)
-    ggml_backend_sched_t sched             = nullptr;    // owned, multi-device only
+    ggml_backend_sched_t sched             = nullptr;    // owned
     ggml_backend_t cpu_fallback_backend    = nullptr;    // owned, sched requires a trailing CPU backend
     bool multi_device_eval_callback_warned = false;
 
@@ -2145,8 +2147,22 @@ protected:
         return !extra_runtime_backends.empty();
     }
 
+    bool graph_requires_backend_fallback(ggml_cgraph* gf) const {
+        if (gf == nullptr || sd_backend_is_cpu(runtime_backend)) {
+            return false;
+        }
+        const int n_nodes = ggml_graph_n_nodes(gf);
+        for (int i = 0; i < n_nodes; ++i) {
+            ggml_tensor* node = ggml_graph_node(gf, i);
+            if (node != nullptr && !ggml_backend_supports_op(runtime_backend, node)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool alloc_compute_buffer(ggml_cgraph* gf) {
-        if (is_multi_device()) {
+        if (sched != nullptr || is_multi_device() || graph_requires_backend_fallback(gf)) {
             // The sched replaces the gallocr. Do NOT ggml_backend_sched_reserve
             // the graph here: reserve runs split_graph, which rewires the
             // graph's src pointers to sched-internal copy tensors, and the
@@ -2154,6 +2170,10 @@ protected:
             // rewired graph, silently corrupting every cross-backend input. A
             // graph must be split at most once; the alloc in execute_graph
             // performs the real allocation.
+            if (compute_allocr != nullptr) {
+                ggml_gallocr_free(compute_allocr);
+                compute_allocr = nullptr;
+            }
             return ensure_sched(gf);
         }
         if (compute_allocr != nullptr) {
@@ -2751,7 +2771,7 @@ protected:
         };
         ComputeBufferGuard compute_buffer_guard(this, free_compute_buffer);
 
-        if (is_multi_device()) {
+        if (sched != nullptr) {
             ggml_backend_sched_reset(sched);
             pin_multi_device_nodes(gf);  // reset clears the pins; re-apply before alloc
             if (!ggml_backend_sched_alloc_graph(sched, gf)) {
@@ -2772,9 +2792,9 @@ protected:
         }
 
         ggml_status status;
-        if (is_multi_device()) {
+        if (sched != nullptr) {
             if (sd_get_backend_eval_callback() != nullptr && !multi_device_eval_callback_warned) {
-                LOG_WARN("%s: eval callback is not supported with multiple runtime backends; ignoring",
+                LOG_WARN("%s: eval callback is not supported with the backend scheduler; ignoring",
                          get_desc().c_str());
                 multi_device_eval_callback_warned = true;
             }
@@ -3016,12 +3036,9 @@ public:
 
     // do copy after alloc graph
     void set_backend_tensor_data(ggml_tensor* tensor, const void* data) {
-        if (is_multi_device()) {
-            // The sched only assigns a backend (and thus a buffer) to tensors
-            // that participate in the graph; flag standalone data tensors as
-            // inputs so they get one.
-            ggml_set_input(tensor);
-        }
+        // The scheduler only allocates standalone data tensors when they are
+        // marked as graph inputs. The flag is harmless for single-backend graphs.
+        ggml_set_input(tensor);
         backend_tensor_data_map[tensor] = data;
     }
 
@@ -3238,6 +3255,11 @@ protected:
 
     virtual void init_params(ggml_context* ctx, const String2TensorStorage& tensor_storage_map = {}, const std::string prefix = "") {}
 
+    virtual enum ggml_op param_usage_op(const std::string& name) const {
+        (void)name;
+        return GGML_OP_NONE;
+    }
+
 public:
     void init(ggml_context* ctx, const String2TensorStorage& tensor_storage_map = {}, std::string prefix = "") {
         if (prefix.size() > 0) {
@@ -3288,6 +3310,18 @@ public:
         }
     }
 
+    void get_param_tensor_ops(std::map<ggml_tensor*, enum ggml_op>& tensor_ops) {
+        for (auto& pair : blocks) {
+            pair.second->get_param_tensor_ops(tensor_ops);
+        }
+        for (auto& pair : params) {
+            enum ggml_op op = param_usage_op(pair.first);
+            if (op != GGML_OP_NONE) {
+                tensor_ops[pair.second] = op;
+            }
+        }
+    }
+
     virtual std::string get_desc() {
         return "GGMLBlock";
     }
@@ -3309,7 +3343,7 @@ public:
 
 class Identity : public UnaryBlock {
 public:
-    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
+    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
         return x;
     }
 };
@@ -3368,7 +3402,7 @@ public:
         force_prec_f32 = force_prec_f32_;
     }
 
-    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
+    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
         ggml_tensor* w = params["weight"];
         ggml_tensor* b = nullptr;
         if (bias) {
@@ -3415,6 +3449,10 @@ protected:
         params["weight"] = ggml_new_tensor_2d(ctx, wtype, embedding_dim, num_embeddings);
     }
 
+    enum ggml_op param_usage_op(const std::string& name) const override {
+        return name == "weight" ? GGML_OP_GET_ROWS : GGML_OP_NONE;
+    }
+
 public:
     Embedding(int64_t num_embeddings, int64_t embedding_dim)
         : embedding_dim(embedding_dim),
@@ -3422,7 +3460,7 @@ public:
     }
 
     ggml_tensor* forward(GGMLRunnerContext* ctx,
-                         ggml_tensor* input_ids) {
+                         ggml_tensor* input_ids) override {
         // input_ids: [N, n_token]
         auto weight = params["weight"];
 
@@ -3482,11 +3520,11 @@ public:
         scale = scale_value;
     }
 
-    std::string get_desc() {
+    std::string get_desc() override {
         return "Conv2d";
     }
 
-    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
+    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
         ggml_tensor* w = params["weight"];
         ggml_tensor* b = nullptr;
         if (bias) {
@@ -3569,11 +3607,11 @@ public:
         scale = scale_value;
     }
 
-    std::string get_desc() {
+    std::string get_desc() override {
         return "Conv2d_grouped";
     }
 
-    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
+    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
         ggml_tensor* w = params["weight"];
         ggml_tensor* b = nullptr;
         if (bias) {
@@ -3609,18 +3647,19 @@ public:
         if (groups == in_channels && groups == out_channels) {
             ggml_tensor* res;
             if (ctx->conv2d_direct_enabled) {
-                res = ggml_conv_2d_dw_direct(ctx->ggml_ctx, x, w,
+                res = ggml_conv_2d_dw_direct(ctx->ggml_ctx, w, x,
                                              stride.second, stride.first,
                                              padding.second, padding.first,
                                              dilation.second, dilation.first);
             } else {
-                res = ggml_conv_2d_dw(ctx->ggml_ctx, x, w,
+                res = ggml_conv_2d_dw(ctx->ggml_ctx, w, x,
                                       stride.second, stride.first,
                                       padding.second, padding.first,
                                       dilation.second, dilation.first);
             }
             if (b) {
-                res = ggml_add(ctx->ggml_ctx, res, b);
+                b   = ggml_reshape_4d(ctx->ggml_ctx, b, 1, 1, b->ne[0], 1);
+                res = ggml_add_inplace(ctx->ggml_ctx, res, b);
             }
             return res;
         }
@@ -3725,7 +3764,7 @@ public:
           bias(bias),
           force_prec_f32(force_prec_f32) {}
 
-    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
+    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
         ggml_tensor* w = params["weight"];
         ggml_tensor* b = nullptr;
         if (ctx->weight_adapter) {
@@ -3778,7 +3817,7 @@ public:
           elementwise_affine(elementwise_affine),
           bias(bias) {}
 
-    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
+    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
         ggml_tensor* w = nullptr;
         ggml_tensor* b = nullptr;
 
@@ -3865,7 +3904,7 @@ public:
         : hidden_size(hidden_size),
           eps(eps) {}
 
-    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
+    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
         ggml_tensor* w = params["weight"];
         if (ctx->weight_adapter) {
             w = ctx->weight_adapter->patch_weight(ctx->ggml_ctx, ctx->backend, w, prefix + "weight");
