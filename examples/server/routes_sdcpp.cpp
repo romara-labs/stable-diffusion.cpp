@@ -1,13 +1,112 @@
 #include "routes.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
+#include <mutex>
 
 #include "async_jobs.h"
 #include "common/common.h"
 
 namespace fs = std::filesystem;
+
+struct VideoStreamingProgressState {
+    httplib::DataSink* sink = nullptr;
+    std::mutex mutex;
+    std::atomic<bool> active{false};
+};
+
+static bool write_video_sse_event(httplib::DataSink& sink, const json& payload) {
+    const std::string event = "data: " + payload.dump() + "\n\n";
+    return sink.write(event.c_str(), event.size());
+}
+
+static bool write_video_sse_done(httplib::DataSink& sink) {
+    const std::string event = "data: [DONE]\n\n";
+    return sink.write(event.c_str(), event.size());
+}
+
+static void video_progress_callback_sse(int step, int steps, float time, void* data) {
+    auto* state = static_cast<VideoStreamingProgressState*>(data);
+    if (state == nullptr || state->sink == nullptr || !state->active.load()) {
+        return;
+    }
+
+    const float percentage = steps > 0 ? (static_cast<float>(step) / static_cast<float>(steps)) * 100.0f : 0.0f;
+    const float eta        = steps > step ? (steps - step) * time : 0.0f;
+
+    json progress_data;
+    progress_data["step"]          = step;
+    progress_data["total_steps"]   = steps;
+    progress_data["percentage"]    = std::round(percentage * 100.0f) / 100.0f;
+    progress_data["time_per_step"] = time;
+    progress_data["eta"]           = eta;
+    progress_data["timestamp"]     = unix_timestamp_now();
+
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (state->sink != nullptr && state->active.load() && !write_video_sse_event(*state->sink, progress_data)) {
+        state->active = false;
+    }
+}
+
+static bool execute_streaming_vid_gen_request(ServerRuntime& runtime,
+                                              VidGenJobRequest request,
+                                              httplib::DataSink& sink,
+                                              std::string& error_message) {
+    VideoStreamingProgressState progress_state;
+    progress_state.sink   = &sink;
+    progress_state.active = true;
+
+    try {
+        if (!write_video_sse_event(sink, {{"status", "starting"}})) {
+            progress_state.active = false;
+            error_message         = "client disconnected";
+            return false;
+        }
+
+        AsyncGenerationJob job;
+        job.kind    = AsyncJobKind::VidGen;
+        job.vid_gen = std::move(request);
+
+        std::string output_media_b64;
+        std::string output_media_mime_type;
+        int output_frame_count = 0;
+        int output_fps         = 0;
+        bool ok                = execute_vid_gen_job(runtime,
+                                                     job,
+                                                     output_media_b64,
+                                                     output_media_mime_type,
+                                                     output_frame_count,
+                                                     output_fps,
+                                                     error_message,
+                                                     video_progress_callback_sse,
+                                                     &progress_state);
+        progress_state.active  = false;
+        if (!ok) {
+            return false;
+        }
+
+        json out;
+        out["status"]        = "completed";
+        out["created"]       = unix_timestamp_now();
+        out["output_format"] = job.vid_gen.output_format;
+        out["mime_type"]     = output_media_mime_type;
+        out["fps"]           = output_fps;
+        out["frame_count"]   = output_frame_count;
+        out["b64_json"]      = std::move(output_media_b64);
+
+        if (!write_video_sse_event(sink, out) || !write_video_sse_done(sink)) {
+            error_message = "client disconnected";
+            return false;
+        }
+        return true;
+    } catch (const std::exception& e) {
+        progress_state.active = false;
+        error_message         = e.what();
+        return false;
+    }
+}
 
 static bool parse_cache_mode(const std::string& mode_str, sd_cache_mode_t& mode_out) {
     if (mode_str == "disabled") {
@@ -166,6 +265,7 @@ static json make_vid_gen_defaults_json(const SDGenerationParams& defaults, const
         {"scm_policy_dynamic", defaults.scm_policy_dynamic},
         {"output_format", output_format},
         {"output_compression", 100},
+        {"stream", false},
     };
 }
 
@@ -194,6 +294,7 @@ static json make_vid_gen_features_json() {
         {"lora", true},
         {"vae_tiling", true},
         {"cache", true},
+        {"stream", true},
         {"cancel_queued", true},
         {"cancel_generating", false},
     };
@@ -489,11 +590,37 @@ void register_sdcpp_api_endpoints(httplib::Server& svr, ServerRuntime& rt) {
             }
 
             json body = json::parse(req.body);
+            if (body.contains("stream") && !body["stream"].is_boolean()) {
+                res.status = 400;
+                res.set_content(R"({"error":"stream must be a boolean"})", "application/json");
+                return;
+            }
+            bool is_stream = body.value("stream", false);
             VidGenJobRequest request;
             std::string error_message;
             if (!parse_vid_gen_request(body, *runtime, request, error_message)) {
                 res.status = 400;
                 res.set_content(json({{"error", error_message}}).dump(), "application/json");
+                return;
+            }
+
+            if (is_stream) {
+                res.set_header("Cache-Control", "no-cache");
+                res.set_header("Connection", "close");
+                res.set_chunked_content_provider(
+                    "text/event-stream",
+                    [runtime, request](size_t offset, httplib::DataSink& sink) mutable -> bool {
+                        if (offset > 0) {
+                            return false;
+                        }
+
+                        std::string stream_error;
+                        if (!execute_streaming_vid_gen_request(*runtime, request, sink, stream_error)) {
+                            write_video_sse_event(sink, {{"status", "error"}, {"error", stream_error}});
+                            write_video_sse_done(sink);
+                        }
+                        return true;
+                    });
                 return;
             }
 
