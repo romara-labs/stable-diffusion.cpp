@@ -133,6 +133,7 @@ struct SDContextParams {
     std::string taesd_path;
     std::string esrgan_path;
     std::string control_net_path;
+    std::string ip_adapter_path;
     std::string motion_module_path;
     std::string embedding_dir;
     std::string photo_maker_path;
@@ -200,6 +201,7 @@ struct SDGenerationParams {
     int64_t seed               = 42;
     float strength             = 0.75f;
     float control_strength     = 0.9f;
+    float ip_adapter_strength  = 1.0f;
     bool auto_resize_ref_image = true;
     bool increase_ref_index    = false;
     bool embed_image_metadata  = true;
@@ -208,7 +210,11 @@ struct SDGenerationParams {
     std::string end_image_path;
     std::string mask_image_path;
     std::string control_image_path;
+    std::string ip_adapter_image_path;
     std::vector<std::string> ref_image_paths;
+    std::vector<std::string> ref_video_paths;
+    std::vector<std::string> ref_video_audio_paths;
+    std::vector<std::string> ref_audio_paths;
     std::string control_video_path;
 
     sd_sample_params_t sample_params;
@@ -272,13 +278,20 @@ struct SDGenerationParams {
     SDImageOwner init_image;
     SDImageOwner end_image;
     std::vector<SDImageOwner> ref_images;
+    std::vector<std::vector<SDImageOwner>> ref_videos;
+    std::vector<SDAudioOwner> ref_video_audios;
+    std::vector<SDAudioOwner> ref_audios;
     SDImageOwner mask_image;
     SDImageOwner control_image;
+    SDImageOwner ip_adapter_image;
     std::vector<SDImageOwner> pm_id_images;
     std::vector<SDImageOwner> control_frames;
 
     // Backing storage for sd_img_gen_params_t view fields.
     std::vector<sd_image_t> ref_image_views;
+    std::vector<std::vector<sd_image_t>> ref_video_frame_views;
+    std::vector<sd_ref_video_t> ref_video_views;
+    std::vector<sd_audio_t> ref_audio_views;
     std::vector<sd_image_t> pm_id_image_views;
     std::vector<sd_image_t> control_frame_views;
 

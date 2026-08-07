@@ -15,6 +15,7 @@ API and command-line option may change frequently.***
 
 ## 🔥Important News
 
+* **2026/08/04** 🚀 stable-diffusion.cpp adds **Day-1 support for MiniMax-H3**
 * **2026/06/25** 🚀 stable-diffusion.cpp now supports **Krea2**
 * **2026/06/04** 🚀 stable-diffusion.cpp now supports **Ideogram4**
 * **2026/05/31** 🚀 stable-diffusion.cpp now supports **PiD**
@@ -54,6 +55,7 @@ API and command-line option may change frequently.***
     - [ERNIE-Image](./docs/ernie_image.md)
     - [Boogu Image](./docs/boogu_image.md)
     - [Krea2](./docs/krea2.md)
+    - [Mage-Flow](./docs/mage_flow.md)
     - [SeFi-Image](./docs/sefi_image.md)
     - [HiDream-O1-Image](./docs/hidream_o1_image.md)
     - [Ideogram4](./docs/ideogram4.md)
@@ -62,12 +64,15 @@ API and command-line option may change frequently.***
     - [Qwen Image Edit series](./docs/qwen_image_edit.md)
     - [LongCat Image Edit](./docs/longcat_image.md)
     - [Boogu Image Edit](./docs/boogu_image.md)
+    - [Mage-Flow-Edit](./docs/mage_flow.md#image-editing)
   - Video Models
     - [Wan2.1/Wan2.2](./docs/wan.md)
+    - [MiniMax-H3](./docs/minimax_h3.md)
     - [LTX-2.3](./docs/ltx2.md)
     - [HunyuanVideo 1.5](./docs/hunyuan_video.md)
     - [LingBot-Video](./docs/lingbot_video.md)
   - [PhotoMaker](./docs/photo_maker.md) support.
+  - [IP-Adapter](./docs/ip_adapter.md) support (SD 1.5 and SDXL, including Plus)
   - Control Net support with SD 1.5
   - [ADetailer](./docs/adetailer.md)
   - LoRA support, same as [stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Features#lora)
@@ -123,7 +128,7 @@ API and command-line option may change frequently.***
     - Stable Diffusion v1.5 from https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5 
 
     ```sh
-    curl -L -O https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors
+    curl -L -O https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors
     ```
 
 ### Generate an image with just one command
@@ -165,6 +170,7 @@ These projects wrap `stable-diffusion.cpp` for easier use in other languages/fra
 
 These projects use `stable-diffusion.cpp` as a backend for their image generation.
 
+- [GIMP Plugins](https://github.com/themanyone/gimp-plugins)
 - [Jellybox](https://jellybox.com)
 - [Stable Diffusion GUI](https://github.com/fszontagh/sd.cpp.gui.wx)
 - [Stable Diffusion CLI-GUI](https://github.com/piallai/stable-diffusion.cpp)

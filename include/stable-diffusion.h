@@ -56,6 +56,7 @@ enum sample_method_t {
     EULER_GE_SAMPLE_METHOD,
     DPMPP2M_SDE_SAMPLE_METHOD,
     DPMPP2M_SDE_BT_SAMPLE_METHOD,
+    LMS_SAMPLE_METHOD,
     SAMPLE_METHOD_COUNT
 };
 
@@ -200,6 +201,7 @@ typedef struct {
     const char* audio_vae_path;
     const char* taesd_path;
     const char* control_net_path;
+    const char* ip_adapter_path;
     const char* motion_module_path;
     const sd_embedding_t* embeddings;
     uint32_t embedding_count;
@@ -244,6 +246,13 @@ typedef struct {
     uint32_t channel;
     uint8_t* data;
 } sd_image_t;
+
+typedef struct {
+    sd_image_t* frames;
+    int frame_count;
+    int fps;
+    sd_audio_t audio;
+} sd_ref_video_t;
 
 typedef struct {
     int* layers;
@@ -375,6 +384,8 @@ typedef struct {
     int batch_count;
     sd_image_t control_image;
     float control_strength;
+    sd_image_t ip_adapter_image;
+    float ip_adapter_strength;
     sd_pm_params_t pm_params;
     sd_pulid_params_t pulid_params;
     sd_tiling_params_t vae_tiling_params;
@@ -393,6 +404,12 @@ typedef struct {
     int clip_skip;
     sd_image_t init_image;
     sd_image_t end_image;
+    sd_image_t* ref_images;
+    int ref_images_count;
+    sd_ref_video_t* ref_videos;
+    int ref_videos_count;
+    sd_audio_t* ref_audios;
+    int ref_audios_count;
     sd_image_t* control_frames;
     int control_frames_size;
     int width;
