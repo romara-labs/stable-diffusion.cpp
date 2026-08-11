@@ -1862,6 +1862,9 @@ protected:
 
     void free_compute_ctx() {
         debug_tensors.clear();
+        cache_tensor_map.clear();
+        one_tensor      = nullptr;
+        zero_int_tensor = nullptr;
         if (compute_ctx != nullptr) {
             ggml_free(compute_ctx);
             compute_ctx = nullptr;
@@ -2966,6 +2969,7 @@ public:
         kept_compute_param_tensor_set.clear();
         free_compute_backend_param_tensors(tensors_to_release);
         free_params_backend_param_tensors(tensors_to_release);
+        free_compute_ctx();
     }
 
 public:
@@ -3013,6 +3017,10 @@ public:
     }
 
     void reset_compute_ctx() {
+        // The allocator and scheduler retain graph-specific state. They must
+        // not outlive compute_ctx, since the next graph may have different
+        // shapes or layouts.
+        free_compute_buffer();
         free_compute_ctx();
         alloc_compute_ctx();
     }
