@@ -69,6 +69,7 @@ namespace sd::backend_fit {
                 contains("conditioner") ||
                 name.rfind("text_encoder.", 0) == 0 ||
                 name.rfind("text_embedding_projection.", 0) == 0 ||
+                name.rfind("cliproj.", 0) == 0 ||
                 contains(".aggregate_embed.")) {
                 out = ComponentKind::CONDITIONER;
                 return true;

@@ -9,6 +9,7 @@
 
 #include "core/tensor_ggml.hpp"
 #include "core/util.h"
+#include "model/adapter/cliproj.hpp"
 #include "model/diffusion/model.hpp"
 #include "model/te/clip.hpp"
 #include "model/te/llm.hpp"
@@ -1811,14 +1812,16 @@ struct LLMEmbedder : public Conditioner {
     std::shared_ptr<BPETokenizer> tokenizer;
     std::shared_ptr<LLM::LLMRunner> llm;
     std::shared_ptr<T5Runner> byt5;
+    std::shared_ptr<ClipProj::ClipProjRunner> cliproj;
 
     LLMEmbedder(ggml_backend_t backend,
                 const String2TensorStorage& tensor_storage_map      = {},
                 SDVersion version                                   = VERSION_QWEN_IMAGE,
                 const std::string prefix                            = "",
                 bool enable_vision                                  = false,
-                std::shared_ptr<RunnerWeightManager> weight_manager = nullptr)
-        : version(version) {
+                std::shared_ptr<RunnerWeightManager> weight_manager = nullptr,
+                std::shared_ptr<ClipProj::ClipProjRunner> cliproj_  = nullptr)
+        : version(version), cliproj(std::move(cliproj_)) {
         LLM::LLMArch arch = LLM::LLMArch::QWEN2_5_VL;
         if (version == VERSION_FLUX2) {
             arch = LLM::LLMArch::MISTRAL_SMALL_3_2;
@@ -1867,10 +1870,19 @@ struct LLMEmbedder : public Conditioner {
                 }
             }
         }
+        if (cliproj && cliproj->get_d_in() != llm->config.hidden_size) {
+            LOG_ERROR("ClipProj mismatch: projection expects d_in=%lld but the text encoder outputs %lld; disabling",
+                      static_cast<long long>(cliproj->get_d_in()),
+                      static_cast<long long>(llm->config.hidden_size));
+            cliproj->set_enabled(false);
+        }
     }
 
     void get_param_tensors(std::map<std::string, ggml_tensor*>& tensors) override {
         llm->get_param_tensors(tensors, "text_encoders.llm");
+        if (cliproj) {
+            cliproj->get_param_tensors(tensors, "cliproj");
+        }
         if (byt5) {
             byt5->get_param_tensors(tensors, "text_encoders.t5xxl.transformer");
         }
@@ -1878,10 +1890,16 @@ struct LLMEmbedder : public Conditioner {
 
     void get_param_tensor_ops(std::map<ggml_tensor*, enum ggml_op>& tensor_ops) override {
         llm->get_param_tensor_ops(tensor_ops);
+        if (cliproj) {
+            cliproj->get_param_tensor_ops(tensor_ops);
+        }
     }
 
     void set_max_graph_vram_bytes(size_t max_vram_bytes) override {
         llm->set_max_graph_vram_bytes(max_vram_bytes);
+        if (cliproj) {
+            cliproj->set_max_graph_vram_bytes(max_vram_bytes);
+        }
         if (byt5) {
             byt5->set_max_graph_vram_bytes(max_vram_bytes);
         }
@@ -1889,6 +1907,9 @@ struct LLMEmbedder : public Conditioner {
 
     void set_stream_layers_enabled(bool enabled) override {
         llm->set_stream_layers_enabled(enabled);
+        if (cliproj) {
+            cliproj->set_stream_layers_enabled(enabled);
+        }
         if (byt5) {
             byt5->set_stream_layers_enabled(enabled);
         }
@@ -1896,6 +1917,9 @@ struct LLMEmbedder : public Conditioner {
 
     void set_runtime_backends(const std::vector<ggml_backend_t>& backends) override {
         llm->set_runtime_backends(backends);
+        if (cliproj) {
+            cliproj->set_runtime_backends(backends);
+        }
         if (byt5) {
             byt5->set_runtime_backends(backends);
         }
@@ -1904,6 +1928,9 @@ struct LLMEmbedder : public Conditioner {
     void set_graph_cut_layer_split_enabled(bool enabled) override {
         if (llm) {
             llm->set_graph_cut_layer_split_enabled(enabled);
+        }
+        if (cliproj) {
+            cliproj->set_graph_cut_layer_split_enabled(enabled);
         }
         if (byt5) {
             byt5->set_graph_cut_layer_split_enabled(enabled);
@@ -1914,6 +1941,9 @@ struct LLMEmbedder : public Conditioner {
         if (llm) {
             llm->set_graph_cut_layer_split_backend_vram_limits(limits);
         }
+        if (cliproj) {
+            cliproj->set_graph_cut_layer_split_backend_vram_limits(limits);
+        }
         if (byt5) {
             byt5->set_graph_cut_layer_split_backend_vram_limits(limits);
         }
@@ -1921,6 +1951,9 @@ struct LLMEmbedder : public Conditioner {
 
     void get_layer_split_param_tensors(std::map<std::string, ggml_tensor*>& tensors) override {
         llm->get_param_tensors(tensors, "text_encoders.llm");
+        if (cliproj) {
+            cliproj->get_param_tensors(tensors, "cliproj");
+        }
         if (byt5) {
             byt5->get_param_tensors(tensors, "text_encoders.t5xxl.transformer");
         }
@@ -1928,6 +1961,9 @@ struct LLMEmbedder : public Conditioner {
 
     void set_flash_attention_enabled(bool enabled) override {
         llm->set_flash_attention_enabled(enabled);
+        if (cliproj) {
+            cliproj->set_flash_attention_enabled(enabled);
+        }
         if (byt5) {
             byt5->set_flash_attention_enabled(enabled);
         }
@@ -1937,6 +1973,9 @@ struct LLMEmbedder : public Conditioner {
         if (llm) {
             llm->set_weight_adapter(adapter);
         }
+        if (cliproj) {
+            cliproj->set_weight_adapter(adapter);
+        }
         if (byt5) {
             byt5->set_weight_adapter(adapter);
         }
@@ -1945,6 +1984,9 @@ struct LLMEmbedder : public Conditioner {
     void runner_done() override {
         if (llm) {
             llm->runner_done();
+        }
+        if (cliproj) {
+            cliproj->runner_done();
         }
         if (byt5) {
             byt5->runner_done();
@@ -2150,7 +2192,9 @@ struct LLMEmbedder : public Conditioner {
 
         if (sd_version_is_minimax_h3(version)) {
             prompt_template_encode_start_idx = 0;
-            out_layers                       = {50};
+            // With a ClipProj projection the conditioning comes from one layer
+            // ("tap") of a small encoder instead of the last layer of the 32B.
+            out_layers                       = {cliproj && cliproj->is_enabled() ? cliproj->get_tap() : 50};
             prompt_attn_range                = {0, 0};
 
             if (llm->enable_vision) {
@@ -2829,6 +2873,13 @@ struct LLMEmbedder : public Conditioner {
                                            max_length,
                                            deepstack_image_embeds,
                                            image_grids);
+        if (cliproj && cliproj->is_enabled()) {
+            hidden_states = cliproj->compute(n_threads, hidden_states, false, true, true);
+            if (hidden_states.empty()) {
+                LOG_ERROR("ClipProj compute failed");
+                return {};
+            }
+        }
         std::vector<sd::Tensor<float>> extra_hidden_states_vec;
         if (sd_version_is_hunyuan_video(version) && byt5) {
             std::vector<std::string> quoted_texts;

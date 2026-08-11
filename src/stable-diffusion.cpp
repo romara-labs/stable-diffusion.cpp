@@ -17,12 +17,14 @@
 #include "core/util.h"
 #include "model_loader.h"
 #include "model_manager.h"
+#include "model_io/safetensors_io.h"
 #include "stable-diffusion.h"
 
 #include "conditioning/conditioner.hpp"
 #include "core/backend_fit.h"
 #include "extensions/generation_extension.h"
 #include "model/adapter/ip_adapter.hpp"
+#include "model/adapter/cliproj.hpp"
 #include "model/adapter/lora.hpp"
 #include "model/diffusion/anima.hpp"
 #include "model/diffusion/animatediff.hpp"
@@ -250,6 +252,9 @@ public:
     std::string params_backend_spec;
     std::string split_mode_spec;
     bool auto_fit_enabled = false;
+
+    std::string cliproj_path;
+    int cliproj_tap = 24;
 
     bool diffusion_conv_direct = false;
 
@@ -784,6 +789,25 @@ public:
             }
         }
 
+        if (strlen(SAFE_STR(sd_ctx_params->cliproj_path)) > 0) {
+            LOG_INFO("loading cliproj from '%s'", sd_ctx_params->cliproj_path);
+            cliproj_path = sd_ctx_params->cliproj_path;
+            if (model_loader.init_from_file(sd_ctx_params->cliproj_path, "cliproj.")) {
+                if (is_safetensors_file(sd_ctx_params->cliproj_path)) {
+                    // The projection's scalar metadata lives in the safetensors
+                    // header; the loader exposes it right after this load.
+                    auto tap_it = model_loader.get_metadata().find("tap");
+                    if (tap_it != model_loader.get_metadata().end()) {
+                        cliproj_tap = std::atoi(tap_it->second.c_str());
+                    }
+                }
+                LOG_INFO("cliproj tap = %d", cliproj_tap);
+            } else {
+                LOG_WARN("loading cliproj from '%s' failed", sd_ctx_params->cliproj_path);
+                cliproj_path.clear();
+            }
+        }
+
         if (strlen(SAFE_STR(sd_ctx_params->vae_path)) > 0) {
             LOG_INFO("loading vae from '%s'", sd_ctx_params->vae_path);
             if (!model_loader.init_from_file(sd_ctx_params->vae_path, "vae.")) {
@@ -903,6 +927,11 @@ public:
             return false;
         } else {
             LOG_INFO("Version: %s ", model_version_to_str[version]);
+        }
+
+        if (!cliproj_path.empty() && !sd_version_is_minimax_h3(version)) {
+            LOG_WARN("cliproj is only supported for MiniMax-H3; ignoring");
+            cliproj_path.clear();
         }
 
         if (auto_fit_enabled) {
@@ -1122,12 +1151,21 @@ public:
                                                                       "model.diffusion_model",
                                                                       model_manager);
             } else if (sd_version_is_minimax_h3(version)) {
+                std::shared_ptr<ClipProj::ClipProjRunner> cliproj_runner;
+                if (!cliproj_path.empty()) {
+                    cliproj_runner = std::make_shared<ClipProj::ClipProjRunner>(backend_for(SDBackendModule::TE),
+                                                                                tensor_storage_map,
+                                                                                "cliproj",
+                                                                                cliproj_tap,
+                                                                                model_manager);
+                }
                 cond_stage_model = std::make_shared<LLMEmbedder>(backend_for(SDBackendModule::TE),
                                                                  tensor_storage_map,
                                                                  version,
                                                                  "",
                                                                  true,
-                                                                 model_manager);
+                                                                 model_manager,
+                                                                 cliproj_runner);
                 diffusion_model  = std::make_shared<MiniMaxH3::MiniMaxH3Runner>(backend_for(SDBackendModule::DIFFUSION),
                                                                                tensor_storage_map,
                                                                                "model.diffusion_model",
@@ -3558,6 +3596,7 @@ char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
              "t5xxl_path: %s\n"
              "llm_path: %s\n"
              "llm_vision_path: %s\n"
+             "cliproj_path: %s\n"
              "diffusion_model_path: %s\n"
              "high_noise_diffusion_model_path: %s\n"
              "uncond_diffusion_model_path: %s\n"
@@ -3592,6 +3631,7 @@ char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
              SAFE_STR(sd_ctx_params->t5xxl_path),
              SAFE_STR(sd_ctx_params->llm_path),
              SAFE_STR(sd_ctx_params->llm_vision_path),
+             SAFE_STR(sd_ctx_params->cliproj_path),
              SAFE_STR(sd_ctx_params->diffusion_model_path),
              SAFE_STR(sd_ctx_params->high_noise_diffusion_model_path),
              SAFE_STR(sd_ctx_params->uncond_diffusion_model_path),
