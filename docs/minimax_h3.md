@@ -87,6 +87,32 @@ The C API exposes the same inputs through `ref_images`, `ref_videos`, and
 `ref_audios` in `sd_vid_gen_params_t`. Each `sd_ref_video_t` supplies its own
 frame rate and optional soundtrack; non-24-fps inputs are resampled internally.
 
+## Replacing the text encoder with a small one (ClipProj)
+
+The 15.7 GB Qwen3-VL-32B text encoder can be replaced by a small Qwen3-VL
+(4B or 8B) plus a learned projection matrix into the 5120-dim conditioning
+space. This cuts the text-encoder memory footprint to that of the small model.
+
+```sh
+.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_fl2va-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_4b_bf16.safetensors --cliproj ..\models\cliproj\mmh3-4b-ClipProj-celeb-mlp.safetensors -p "A cute American Shorthair silver tabby kitten surfs on a tropical ocean wave..." --cfg-scale 1.0 -v -W 864 -H 480 --diffusion-fa --offload-to-cpu --rng cpu --fps 24 --video-frames 56
+```
+
+`--cliproj` accepts the projection matrices from
+[NicoLab28/ClipProj-MiniMax-H3](https://huggingface.co/NicoLab28/ClipProj-MiniMax-H3)
+(MIT). Use a `mmh3-4b-*` matrix with a Qwen3-VL-4B encoder (2560 dims) or a
+`mmh3-8b-*` matrix with a Qwen3-VL-8B (4096 dims); any other mismatch is
+detected and reported, and the projection is disabled. The layer index to read
+("tap") and the d_in/d_out dimensions are read from the safetensors header, so
+both the plain matrices and the `-mlp` ones with their fp16 residual network
+work unchanged. The matrix is calibrated on bf16 encoders and applies to any
+variant of the same size, quantised or not.
+
+Limitations are inherited from the projection: reference images/videos
+(`--ref-image`, `--ref-video`) are outside the calibration distribution, and
+the small encoder does not know everything the 32B does. The projection is
+only used when both `--llm` and `--cliproj` are given and the diffusion model
+is a MiniMax-H3 variant; otherwise it is ignored with a warning.
+
 ## Shape and runtime notes
 
 - Width and height are aligned upward to a multiple of 32.
