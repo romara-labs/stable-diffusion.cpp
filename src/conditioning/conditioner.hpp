@@ -2272,6 +2272,12 @@ struct LLMEmbedder : public Conditioner {
                 }
             }
             prompt += conditioner_params.text;
+            if (prompt.empty()) {
+                // MiniMax-H3 uses the raw Qwen prompt instead of a chat template.
+                // CFG commonly supplies an empty negative prompt, which must still
+                // produce one token for the LLM attention graph.
+                prompt = "<|endoftext|>";
+            }
         } else if (sd_version_is_hunyuan_video(version)) {
             prompt_template_encode_start_idx = 98;
             out_layers                       = {26};
