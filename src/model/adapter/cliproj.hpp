@@ -19,7 +19,8 @@
 // mlp.0.weight/bias, mlp.2.weight/bias and the scalar metadata "tap" (layer
 // index of the small encoder to read). The v3 matrices dropped W after the
 // residual network subsumed the ridge fit, and widened mlp.0 to 32768 hidden
-// units; both variants are detected from the file.
+// units; v3.1 additionally dropped the measured sink vector. All variants are
+// detected from the file.
 namespace ClipProj {
 
 // The projection file stores W in PyTorch layout [d_in, d_out]. After the
@@ -32,6 +33,7 @@ namespace ClipProj {
         int64_t d_out;
         int64_t mlp_hidden;
         bool has_ridge = false;
+        bool has_sink   = false;
 
         ClipProj(int64_t d_in_, int64_t d_out_, int64_t mlp_hidden_)
             : d_in(d_in_), d_out(d_out_), mlp_hidden(mlp_hidden_) {
@@ -53,7 +55,10 @@ namespace ClipProj {
             params["std_in"]   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_in);
             params["mean_out"] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_out);
             params["std_out"]  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_out);
-            params["sink_out"] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_out);
+            if (tensor_storage_map.find(prefix + "sink_out") != tensor_storage_map.end()) {
+                has_sink        = true;
+                params["sink_out"] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_out);
+            }
         }
 
         ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
@@ -85,7 +90,11 @@ namespace ClipProj {
             // Token 0 is an attention sink: its direction is constant across
             // prompts, so substituting its measured value is exact rather than
             // approximate. The calibration excluded it from the fit because its
-            // extreme norm would wreck the statistics.
+            // extreme norm would wreck the statistics. The v3.1 matrices ship
+            // without the measured sink and skip the substitution.
+            if (!has_sink) {
+                return cond;
+            }
             if (x->ne[1] > 1) {
                 auto head = ggml_reshape_2d(ctx->ggml_ctx, params["sink_out"], d_out, 1);
                 auto tail = ggml_ext_slice(ctx->ggml_ctx, cond, 1, 1, x->ne[1]);
@@ -191,11 +200,12 @@ namespace ClipProj {
               tap(tap_),
               model(dims.d_in, dims.d_out, dims.mlp_hidden) {
             model.init(params_ctx, tensor_storage_map, prefix);
-            LOG_INFO("cliproj: d_in=%lld d_out=%lld mlp_hidden=%lld ridge=%d tap=%d",
+            LOG_INFO("cliproj: d_in=%lld d_out=%lld mlp_hidden=%lld ridge=%d sink=%d tap=%d",
                      static_cast<long long>(model.d_in),
                      static_cast<long long>(model.d_out),
                      static_cast<long long>(model.mlp_hidden),
                      model.has_ridge ? 1 : 0,
+                     model.has_sink ? 1 : 0,
                      tap);
         }
     };
