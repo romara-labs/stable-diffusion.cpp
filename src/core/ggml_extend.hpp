@@ -1047,6 +1047,7 @@ __STATIC_INLINE__ ggml_tensor* ggml_ext_linear_i8_tensorwise(ggml_context* ctx,
                                                              int convrot_group_size,
                                                              float scale = 1.f) {
     GGML_ASSERT(x->type == GGML_TYPE_F32 || (x->type == GGML_TYPE_I8 && scale == 1.f));
+#if defined(SD_GGML_I8_OPS)
     if (scale != 1.f) {
         x = ggml_ext_scale(ctx, x, scale);
     }
@@ -1069,6 +1070,15 @@ __STATIC_INLINE__ ggml_tensor* ggml_ext_linear_i8_tensorwise(ggml_context* ctx,
         }
     }
     return x;
+#else
+    // Unreachable: int8_tensorwise weights are rejected at load time when the
+    // ggml fork ops are missing (see safetensors_io.cpp / SD_GGML_I8_OPS).
+    GGML_UNUSED(weight_scale);
+    GGML_UNUSED(convrot_group_size);
+    GGML_UNUSED(b);
+    GGML_UNUSED(scale);
+    GGML_ABORT("int8_tensorwise linear requires the sd.cpp ggml fork");
+#endif
 }
 
 __STATIC_INLINE__ ggml_tensor* ggml_ext_pad_ext(ggml_context* ctx,
@@ -3490,6 +3500,7 @@ public:
             if (ctx->weight_adapter && b != nullptr) {
                 b = ctx->weight_adapter->patch_weight(ctx->ggml_ctx, ctx->backend, b, prefix + "bias");
             }
+#if defined(SD_GGML_I8_OPS)
             if (int8_convrot && scale == 1.f) {
                 const auto cache_key = std::make_pair(x, int8_convrot_group_size);
                 auto cached          = ctx->int8_convrot_cache.find(cache_key);
@@ -3500,6 +3511,7 @@ public:
                     x = cached->second;
                 }
             }
+#endif
             out = ggml_ext_linear_i8_tensorwise(ctx->ggml_ctx,
                                                 x,
                                                 w,

@@ -272,6 +272,23 @@ set_property(
   SDCPP_BUILD_COMMIT=${SDCPP_BUILD_COMMIT} SDCPP_BUILD_VERSION=${SDCPP_BUILD_VERSION}
 )
 
+# ComfyUI int8_tensorwise / int8 convrot models rely on ops that only the
+# sd.cpp ggml fork provides. Detect them so builds against upstream ggml
+# still compile; the int8 path is rejected at load time when they are absent.
+if(NOT SD_USE_SYSTEM_GGML AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ggml/include/ggml.h")
+    include(CheckSymbolExists)
+    set(CMAKE_REQUIRED_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}/ggml/include")
+    check_symbol_exists(ggml_mul_mat_i8_tensorwise "ggml.h" SD_HAVE_MUL_MAT_I8_TENSORWISE)
+    check_symbol_exists(ggml_quantize_i8_convrot "ggml.h" SD_HAVE_QUANTIZE_I8_CONVROT)
+    unset(CMAKE_REQUIRED_INCLUDES)
+    if(SD_HAVE_MUL_MAT_I8_TENSORWISE AND SD_HAVE_QUANTIZE_I8_CONVROT)
+        message(STATUS "ggml int8 tensorwise/convrot ops found")
+        add_compile_definitions(SD_GGML_I8_OPS)
+    else()
+        message(STATUS "ggml int8 tensorwise/convrot ops not found - ComfyUI int8_tensorwise models disabled")
+    endif()
+endif()
+
 if(SD_BUILD_SHARED_LIBS)
     message("-- Build shared library")
     message(${SD_LIB_SOURCES})

@@ -27,6 +27,10 @@ are detected from their weights.
 - Download minimax_h3_fl2va/minimax_h3_ref2va
     - safetensors: https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/diffusion_models
     - gguf: https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main
+    - pruned gguf: https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF
+      (ComfyUI GGUF layout: awkward tensors are flat 256-block streams or
+      flattened to 1-D with the true shape in `comfy.gguf.orig_shape.<name>`
+      metadata; the loader reshapes them at load time)
 - Download qwen3vl_32b_minimax_h3
     - safetensors: https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/text_encoders
     - gguf: https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main
@@ -102,10 +106,15 @@ space. This cuts the text-encoder memory footprint to that of the small model.
 (MIT). Use a `mmh3-4b-*` matrix with a Qwen3-VL-4B encoder (2560 dims) or a
 `mmh3-8b-*` matrix with a Qwen3-VL-8B (4096 dims); any other mismatch is
 detected and reported, and the projection is disabled. The layer index to read
-("tap") and the d_in/d_out dimensions are read from the safetensors header, so
-both the plain matrices and the `-mlp` ones with their fp16 residual network
-work unchanged. The matrix is calibrated on bf16 encoders and applies to any
-variant of the same size, quantised or not.
+("tap") comes from the safetensors metadata, and d_in, d_out, the residual
+hidden width, and the presence of the ridge matrix `W` are all detected from
+the tensor shapes, so the plain matrices, the `-mlp` ones with their fp16
+residual network, and the v3 matrices (ridge dropped, 32768-wide residual
+hidden) work unchanged. The matrix is calibrated on bf16 encoders and applies
+to any variant of the same size, quantised or not. The small encoder itself
+may be a llama.cpp GGUF (for example an Unsloth
+`Qwen3-VL-4B-Instruct-UD-Q8_K_XL.gguf`), with the Qwen3-VL vision tower
+supplied separately as an mmproj GGUF through `--llm_vision`.
 
 Limitations are inherited from the projection: reference images/videos
 (`--ref-image`, `--ref-video`) are outside the calibration distribution, and
