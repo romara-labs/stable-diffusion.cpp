@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
+#include <map>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -36,6 +38,89 @@ bool is_gguf_file(const std::string& file_path) {
         }
     }
 
+    return true;
+}
+
+// ComfyUI-GGUF converters store tensors that ggml cannot represent directly
+// (e.g. quantized tensors whose logical row length is not a multiple of the
+// block size) as a flat block stream, with the logical shape recorded in
+// "comfy.gguf.orig_shape.<tensor>" metadata in torch dimension order.
+static bool apply_comfy_orig_shapes(const gguf_context* ctx_gguf,
+                                    std::vector<TensorStorage>& tensor_storages,
+                                    std::string* error) {
+    static const char ORIG_SHAPE_PREFIX[] = "comfy.gguf.orig_shape.";
+    const size_t prefix_len               = strlen(ORIG_SHAPE_PREFIX);
+
+    std::map<std::string, std::vector<int64_t>> orig_shapes;
+    int64_t n_kv = gguf_get_n_kv(ctx_gguf);
+    for (int64_t i = 0; i < n_kv; i++) {
+        const char* key = gguf_get_key(ctx_gguf, i);
+        if (key == nullptr || strncmp(key, ORIG_SHAPE_PREFIX, prefix_len) != 0) {
+            continue;
+        }
+        if (gguf_get_kv_type(ctx_gguf, i) != GGUF_TYPE_ARRAY ||
+            gguf_get_arr_type(ctx_gguf, i) != GGUF_TYPE_INT32) {
+            set_error(error, "invalid comfy.gguf.orig_shape metadata for '" + std::string(key) + "'");
+            return false;
+        }
+        size_t n            = gguf_get_arr_n(ctx_gguf, i);
+        const int32_t* dims = static_cast<const int32_t*>(gguf_get_arr_data(ctx_gguf, i));
+        std::vector<int64_t> shape(n);
+        for (size_t j = 0; j < n; j++) {
+            shape[j] = dims[j];
+        }
+        orig_shapes[std::string(key + prefix_len)] = std::move(shape);
+    }
+    if (orig_shapes.empty()) {
+        return true;
+    }
+
+    int n_reshaped    = 0;
+    int n_dequantized = 0;
+    for (auto& tensor_storage : tensor_storages) {
+        auto it = orig_shapes.find(tensor_storage.name);
+        if (it == orig_shapes.end()) {
+            continue;
+        }
+        const std::vector<int64_t>& shape = it->second;
+        int64_t nelements                 = 1;
+        bool valid                        = !shape.empty() && shape.size() <= SD_MAX_DIMS;
+        for (int64_t dim : shape) {
+            valid = valid && dim > 0;
+            nelements *= dim;
+        }
+        if (!valid || nelements != tensor_storage.nelements()) {
+            set_error(error,
+                      "unsupported comfy.gguf.orig_shape for '" + tensor_storage.name +
+                          "' (legacy padded ComfyUI-GGUF layouts are not supported)");
+            return false;
+        }
+        // sd.cpp stores conv3d weights with the two slowest torch dims (out, in)
+        // folded into one ggml dim; torch 5-d shapes arrive unfolded.
+        std::vector<int64_t> ggml_dims(shape.rbegin(), shape.rend());
+        if (ggml_dims.size() == 5) {
+            ggml_dims[3] *= ggml_dims[4];
+            ggml_dims.resize(4);
+        }
+        for (int j = 0; j < SD_MAX_DIMS; j++) {
+            tensor_storage.ne[j] = 1;
+        }
+        tensor_storage.n_dims = (int)ggml_dims.size();
+        for (size_t j = 0; j < ggml_dims.size(); j++) {
+            tensor_storage.ne[j] = ggml_dims[j];
+        }
+        if (ggml_is_quantized(tensor_storage.type) &&
+            tensor_storage.ne[0] % ggml_blck_size(tensor_storage.type) != 0) {
+            // A flat block stream cannot back a quantized tensor whose row length
+            // is not a multiple of the block size; load it dequantized instead.
+            tensor_storage.expected_type = GGML_TYPE_F16;
+            n_dequantized++;
+        }
+        n_reshaped++;
+    }
+    LOG_INFO("applied comfy.gguf.orig_shape to %d tensors (%d tensors will be dequantized to f16)",
+             n_reshaped,
+             n_dequantized);
     return true;
 }
 
@@ -89,6 +174,12 @@ bool read_gguf_file(const std::string& file_path,
         }
 
         tensor_storages.push_back(tensor_storage);
+    }
+
+    if (!apply_comfy_orig_shapes(ctx_gguf_, tensor_storages, error)) {
+        gguf_free(ctx_gguf_);
+        ggml_free(ctx_meta_);
+        return false;
     }
 
     gguf_free(ctx_gguf_);

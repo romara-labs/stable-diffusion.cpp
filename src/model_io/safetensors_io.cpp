@@ -294,6 +294,13 @@ bool read_safetensors_file(const std::string& file_path,
             const std::string module_name = name.substr(0, name.size() - std::string(".weight").size());
             auto config                   = comfy_quant_configs.find(module_name);
             if (config != comfy_quant_configs.end() && config->second.format == "int8_tensorwise") {
+#if !defined(SD_GGML_I8_OPS)
+                set_error(error,
+                          "ComfyUI int8_tensorwise models require the sd.cpp ggml fork "
+                          "(missing ggml_mul_mat_i8_tensorwise): '" +
+                              name + "'");
+                return false;
+#else
                 if (type != GGML_TYPE_I8) {
                     set_error(error, "ComfyUI int8_tensorwise weight is not I8: '" + name + "'");
                     return false;
@@ -311,6 +318,7 @@ bool read_safetensors_file(const std::string& file_path,
                 tensor_storage.is_int8_tensorwise      = true;
                 tensor_storage.int8_convrot            = config->second.convrot;
                 tensor_storage.int8_convrot_group_size = config->second.group_size;
+#endif
             }
         } else if (ends_with(name, ".weight_scale")) {
             const std::string module_name = name.substr(0, name.size() - std::string(".weight_scale").size());
