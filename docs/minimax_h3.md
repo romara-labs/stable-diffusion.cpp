@@ -107,10 +107,11 @@ space. This cuts the text-encoder memory footprint to that of the small model.
 `mmh3-8b-*` matrix with a Qwen3-VL-8B (4096 dims); any other mismatch is
 detected and reported, and the projection is disabled. The layer index to read
 ("tap") comes from the safetensors metadata, and d_in, d_out, the residual
-hidden width, and the presence of the ridge matrix `W` are all detected from
-the tensor shapes, so the plain matrices, the `-mlp` ones with their fp16
-residual network, and the v3 matrices (ridge dropped, 32768-wide residual
-hidden) work unchanged. The matrix is calibrated on bf16 encoders and applies
+hidden width, and the presence of the ridge matrix `W` and of the measured
+sink vector are all detected from the tensor shapes, so the plain matrices,
+the `-mlp` ones with their fp16 residual network, the v3 matrices (ridge
+dropped, 32768-wide residual hidden), and the v3.1 matrices (sink vector
+dropped as well) work unchanged. The matrix is calibrated on bf16 encoders and applies
 to any variant of the same size, quantised or not. The small encoder itself
 may be a llama.cpp GGUF (for example an Unsloth
 `Qwen3-VL-4B-Instruct-UD-Q8_K_XL.gguf`), with the Qwen3-VL vision tower
