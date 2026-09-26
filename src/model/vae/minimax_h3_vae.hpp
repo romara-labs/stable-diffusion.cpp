@@ -291,8 +291,7 @@ namespace MiniMaxH3VAE {
             k                   = ggml_rms_norm(ctx->ggml_ctx, k, 1e-5f);
             q                   = apply_partial_rope(ctx->ggml_ctx, q, pe);
             k                   = apply_partial_rope(ctx->ggml_ctx, k, pe);
-            auto out            = ggml_ext_attention_ext(ctx->ggml_ctx,
-                                                         ctx->backend,
+            auto out            = ggml_ext_attention_ext(ctx,
                                                          q,
                                                          k,
                                                          v,
@@ -557,11 +556,18 @@ namespace MiniMaxH3VAE {
                                    tensor.shape()[3]});
         }
 
-        static sd_tiling_params_t h3_tiling(sd_tiling_params_t params) {
-            params.enabled        = true;
-            params.tile_size_x    = 16;
-            params.tile_size_y    = 16;
-            params.target_overlap = 0.25f;
+        sd_tiling_params_t resolve_tiling_params(sd_tiling_params_t params) const override {
+            if (!params.enabled) {
+                params.target_overlap = 0.25f;
+            }
+            if (params.tile_size_w == 0 && params.rel_size_w == 0.f) {
+                params.tile_size_w = 256;
+            }
+            if (params.tile_size_h == 0 && params.rel_size_h == 0.f) {
+                params.tile_size_h = 256;
+            }
+            params.enabled         = true;
+            params.temporal_tiling = false;
             return params;
         }
 
@@ -605,7 +611,7 @@ namespace MiniMaxH3VAE {
                                  bool circular_x = false,
                                  bool circular_y = false) override {
             auto input  = ensure_video_shape(x);
-            auto tiling = h3_tiling(tiling_params);
+            auto tiling = resolve_tiling_params(tiling_params);
             if (input.shape()[2] == 1) {
                 auto encoded = VAE::encode(n_threads, input, tiling, circular_x, circular_y);
                 if (!encoded.empty() && encoded.shape()[2] > 1) {
@@ -624,15 +630,13 @@ namespace MiniMaxH3VAE {
             if (pad > 0) {
                 input = repeat_last_frame(input, pad);
             }
-            sd::Tensor<float> result;
-            for (int64_t start = 0; start < input.shape()[2]; start += 17) {
-                auto chunk   = sd::ops::slice(input, 2, start, start + 17);
-                auto encoded = VAE::encode(n_threads, chunk, tiling, circular_x, circular_y);
-                if (encoded.empty()) {
-                    return {};
-                }
-                result = result.empty() ? std::move(encoded)
-                                        : sd::ops::concat(result, encoded, 2);
+            auto plan   = make_vae_temporal_tile_plan(input.shape()[2], {17, 0});
+            auto result = process_vae_temporal_tiles(input, plan, [&](const sd::Tensor<float>& chunk, const VAETemporalTile& tile) {
+                SD_UNUSED(tile);
+                return VAE::encode(n_threads, chunk, tiling, circular_x, circular_y);
+            });
+            if (result.empty()) {
+                return {};
             }
             if (result.shape()[2] > 3) {
                 result = sd::ops::slice(result, 2, 0, result.shape()[2] - 3);
@@ -648,7 +652,7 @@ namespace MiniMaxH3VAE {
                                  bool circular_y   = false,
                                  bool silent       = false) override {
             auto input  = ensure_video_shape(x);
-            auto tiling = h3_tiling(tiling_params);
+            auto tiling = resolve_tiling_params(tiling_params);
             if (input.shape()[2] == 1) {
                 auto decoded = VAE::decode(n_threads,
                                            input,
@@ -685,22 +689,21 @@ namespace MiniMaxH3VAE {
                 input = repeat_last_frame(input, pad_tokens);
             }
 
-            sd::Tensor<float> result;
             sd::Tensor<float> overlap;
-            for (int64_t i = 0; i < num_chunks; ++i) {
-                int64_t start = i * tokens_per_chunk;
-                int64_t end   = std::min(start + tokens_per_chunk + token_overlap,
-                                         input.shape()[2]);
-                auto chunk    = sd::ops::slice(input, 2, start, end);
-                auto decoded  = VAE::decode(n_threads,
-                                            chunk,
-                                            tiling,
-                                            true,
-                                            circular_x,
-                                            circular_y,
-                                            silent);
+            auto plan = make_vae_temporal_tile_plan(
+                input.shape()[2],
+                {static_cast<int>(tokens_per_chunk + token_overlap), static_cast<int>(token_overlap)});
+            GGML_ASSERT(plan.tiles.size() == static_cast<size_t>(num_chunks));
+            auto result = process_vae_temporal_tiles(input, plan, [&](const sd::Tensor<float>& chunk, const VAETemporalTile& tile) {
+                auto decoded = VAE::decode(n_threads,
+                                           chunk,
+                                           tiling,
+                                           true,
+                                           circular_x,
+                                           circular_y,
+                                           silent);
                 if (decoded.empty()) {
-                    return {};
+                    return sd::Tensor<float>();
                 }
 
                 int64_t first_end = std::min<int64_t>(frames_per_chunk, decoded.shape()[2]);
@@ -712,8 +715,6 @@ namespace MiniMaxH3VAE {
                     first   = blend_temporal(overlap, first, frame_overlap);
                     overlap = {};
                 }
-                result = result.empty() ? std::move(first)
-                                        : sd::ops::concat(result, first, 2);
 
                 if (decoded.shape()[2] > frames_per_chunk + frame_pre_padding) {
                     overlap = sd::ops::slice(decoded,
@@ -721,10 +722,14 @@ namespace MiniMaxH3VAE {
                                              frames_per_chunk + frame_pre_padding,
                                              decoded.shape()[2]);
                 }
-                if (i == num_chunks - 1 && !overlap.empty()) {
-                    result  = sd::ops::concat(result, overlap, 2);
+                if (tile.last && !overlap.empty()) {
+                    first   = sd::ops::concat(first, overlap, 2);
                     overlap = {};
                 }
+                return first;
+            });
+            if (result.empty()) {
+                return {};
             }
 
             int64_t expected_frames = input.shape()[2] <= 1 ? 1 : ((x.shape()[2] - 2) / 5) * 17 + 5;
@@ -791,11 +796,9 @@ namespace MiniMaxH3VAE {
                 return graph;
             };
             return restore_trailing_singleton_dims(
-                GGMLRunner::compute<float>(get_graph,
-                                           n_threads,
-                                           false,
-                                           false,
-                                           false),
+                GGMLRunner::compute(get_graph,
+                                    n_threads,
+                                    false),
                 5);
         }
     };
