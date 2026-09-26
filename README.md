@@ -89,6 +89,7 @@ API and command-line option may change frequently.***
 - Supported backends
   - CPU (AVX, AVX2 and AVX512 support for x86 architectures)
   - CUDA
+  - ROCm (HipBLAS)
   - Vulkan
   - Metal
   - OpenCL
