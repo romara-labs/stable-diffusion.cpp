@@ -9,6 +9,7 @@
 
 #include "async_jobs.h"
 #include "common/common.h"
+#include "common/media_io.h"
 #include "common/resource_owners.hpp"
 #include "routes.h"
 #include "runtime.h"
@@ -76,6 +77,8 @@ int main(int argc, const char** argv) {
     SDSvrParams svr_params;
     SDContextParams ctx_params;
     SDGenerationParams default_gen_params;
+
+    set_png_compression_level(svr_params.png_compression_level);
 
     sd_set_log_callback(sd_log_cb, (void*)&svr_params);
     parse_args(argc, argv, svr_params, ctx_params, default_gen_params);

@@ -68,6 +68,9 @@ struct GGMLRunnerContext {
     ggml_backend_t backend                                           = nullptr;
     ggml_context* ggml_ctx                                           = nullptr;
     ggml_cgraph* graph                                               = nullptr;
+    // True when the runner registered a load-time parameter transform. The model manager
+    // applies it before any loaded parameter can be used by the graph.
+    bool param_transform_registered                                  = false;
     bool flash_attn_enabled                                          = false;
     bool sage_attn_enabled                                           = false;
     float linear_scale                                               = 0.f;

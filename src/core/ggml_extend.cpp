@@ -691,8 +691,13 @@ ggml_tensor* ggml_ext_attention_ext(ggml_context* ctx,
         }
         k_in = ggml_cast(ctx, k_in, GGML_TYPE_F16);
 
-        v_in = ggml_ext_cont(ctx, ggml_permute(ctx, v_in, 0, 2, 1, 3));
-        v_in = ggml_reshape_3d(ctx, v_in, d_head, L_k, n_kv_head * N);
+        const bool strided_v_cast = N == 1 && v_in->type == GGML_TYPE_F32 &&
+                                    sd_backend_is(backend, "Vulkan");
+        v_in = ggml_permute(ctx, v_in, 0, 2, 1, 3);
+        if (!strided_v_cast) {
+            v_in = ggml_ext_cont(ctx, v_in);
+            v_in = ggml_reshape_3d(ctx, v_in, d_head, L_k, n_kv_head * N);
+        }
         if (pad_head) {
             v_in = ggml_pad(ctx, v_in, 64 - d_head, 0, 0, 0);
         }

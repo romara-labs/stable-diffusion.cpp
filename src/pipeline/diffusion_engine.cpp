@@ -1079,7 +1079,7 @@ void StableDiffusionGGML::configure_weight_loading() {
         apply_lora_immediately = false;
     }
 
-    bool needs_writable_mmap = enable_mmap && apply_lora_immediately;
+    bool needs_writable_mmap = enable_mmap && (apply_lora_immediately || sd_version_is_krea2(version));
     model_manager->set_writable_mmap(needs_writable_mmap);
     if (enable_mmap && apply_lora_immediately) {
         LOG_WARN("in mode 'immediately', LoRAs will cause extra memory usage with mmap");
@@ -1115,6 +1115,9 @@ bool StableDiffusionGGML::build_core_runners() {
     if (audio_encoder) {
         audio_encoder->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::AUDIO_ENCODER));
     }
+    if (model_manager) {
+        model_manager->set_param_transform(ModelComponent::Diffusion, diffusion_model->get_param_transform());
+    }
     return register_runner_params(ModelComponent::Conditioner, cond_stage_model, SDBackendModule::TE) &&
            register_runner_params(ModelComponent::Diffusion, diffusion_model, SDBackendModule::DIFFUSION) &&
            register_runner_params(ModelComponent::HighNoiseDiffusion, high_noise_diffusion_model, SDBackendModule::DIFFUSION) &&
@@ -1140,6 +1143,10 @@ bool StableDiffusionGGML::build_vae_runners() {
     first_stage_model->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::VAE));
     if (preview_vae) {
         preview_vae->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::VAE));
+    }
+    if (sd_version_is_krea2(version) && sd_backend_is(backend_manager.runtime_backend(SDBackendModule::VAE), "Vulkan")) {
+        LOG_INFO("Using Conv2d direct in the Krea2 Vulkan VAE");
+        first_stage_model->set_conv2d_direct_enabled(true);
     }
     return register_runner_params(ModelComponent::VAE, first_stage_model, SDBackendModule::VAE) &&
            register_runner_params(ModelComponent::PreviewVAE, preview_vae, SDBackendModule::VAE) &&
