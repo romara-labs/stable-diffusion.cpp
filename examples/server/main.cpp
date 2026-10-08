@@ -14,10 +14,6 @@
 #include "routes.h"
 #include "runtime.h"
 
-#ifdef HAVE_INDEX_HTML
-#include "frontend/dist/gen_index_html.h"
-#endif
-
 static void print_usage(const char* argv0, const std::vector<ArgOptions>& options_list) {
     std::cout << version_string() << "\n";
     std::cout << "Usage: " << argv0 << " [options]\n\n";
@@ -138,13 +134,7 @@ int main(int argc, const char** argv) {
         return httplib::Server::HandlerResponse::Unhandled;
     });
 
-    std::string index_html;
-#ifdef HAVE_INDEX_HTML
-    index_html.assign(reinterpret_cast<const char*>(index_html_bytes), index_html_size);
-#else
-    index_html = "Stable Diffusion Server is running";
-#endif
-    register_index_endpoints(svr, svr_params, index_html);
+    register_index_endpoints(svr, svr_params);
     register_openai_api_endpoints(svr, runtime);
     register_sdapi_endpoints(svr, runtime);
     register_sdcpp_api_endpoints(svr, runtime);
