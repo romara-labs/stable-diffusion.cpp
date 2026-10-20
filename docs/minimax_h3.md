@@ -27,6 +27,10 @@ are detected from their weights.
 - Download minimax_h3_fl2va/minimax_h3_ref2va
     - safetensors: https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/diffusion_models
     - gguf: https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main
+    - pruned gguf: https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF
+      (ComfyUI GGUF layout: awkward tensors are flat 256-block streams or
+      flattened to 1-D with the true shape in `comfy.gguf.orig_shape.<name>`
+      metadata; the loader reshapes them at load time)
 - Download qwen3vl_32b_minimax_h3
     - safetensors: https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/text_encoders
     - gguf: https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main
@@ -38,7 +42,7 @@ are detected from their weights.
 ## Text-to-audio-video
 
 ```sh
-.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_fl2va-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_32b_minimax_h3-Q4_K_M.gguf -p "A cute American Shorthair silver tabby kitten surfs on a tropical ocean wave, riding a white surfboard with the clear text 'sd.cpp' on it. Cinematic tracking shot, realistic water, bright sunlight, smooth motion, and consistent character appearance. Add upbeat tropical surf-rock background music with cheerful drums and guitar, synchronized with the kitten’s energetic surfing." --cfg-scale 1.0 -v -W 864 -H 480 --diffusion-fa --offload-to-cpu --rng cpu --fps 24 --video-frames 56
+.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_fl2va-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_32b_minimax_h3-Q4_K_M.gguf -p "A cute American Shorthair silver tabby kitten surfs on a tropical ocean wave, riding a white surfboard with the clear text 'sd.cpp' on it. Cinematic tracking shot, realistic water, bright sunlight, smooth motion, and consistent character appearance. Add upbeat tropical surf-rock background music with cheerful drums and guitar, synchronized with the kitten’s energetic surfing." --cfg-scale 1.0 -v -W 864 -H 480 --offload-to-cpu --rng cpu --fps 24 --video-frames 56
 ```
 
 <video src=../assets/minimax-h3/t2av.mp4 controls="controls" muted="muted" type="video/mp4"></video>
@@ -51,7 +55,7 @@ decoded audio track.
 Add `--init-img` for I2VA, or both `--init-img` and `--end-img` for FL2VA:
 
 ```sh
-.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_fl2va-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_32b_minimax_h3-Q4_K_M.gguf -p "a lovely cat" -i ..\assets\ernie_image\turbo_example.png --cfg-scale 1.0 -v -W 864 -H 480 --diffusion-fa --offload-to-cpu --rng cpu --fps 24 --video-frames 56
+.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_fl2va-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_32b_minimax_h3-Q4_K_M.gguf -p "a lovely cat" -i ..\assets\ernie_image\turbo_example.png --cfg-scale 1.0 -v -W 864 -H 480 --offload-to-cpu --rng cpu --fps 24 --video-frames 56
 ```
 
 <video src=../assets/minimax-h3/i2av.mp4 controls="controls" muted="muted" type="video/mp4"></video>
@@ -62,7 +66,7 @@ Ref2VA accepts any combination of reference images, reference videos, paired
 video soundtracks, and standalone audio references:
 
 ```sh
-.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_ref2va_pruned-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_32b_minimax_h3-Q4_K_M.gguf -p "Use the cat from <Picture 1> as the main character. Keep the cat’s appearance, fur color, facial features, and identity consistent with the reference image. Create a 2-second cinematic video: start with an extreme close-up shot of the cat’s face, focusing on its cute expression and detailed fur texture. The camera slowly rotates around the cat’s head, creating a dynamic reveal. Then smoothly pull back and zoom out to reveal the full scene: the cat is standing confidently on a surfboard, riding ocean waves. Water splashes around the board, sea breeze gently moves the cat’s fur, and the cat maintains a cute and fearless expression while surfing. Smooth camera movement, cinematic orbit shot, seamless zoom-out transition, low-angle wide shot, realistic ocean environment, golden sunlight, dynamic waves, high-quality realistic style, natural motion, no distortion, keep the cat’s identity unchanged." -r ..\assets\ernie_image\turbo_example.png --cfg-scale 1.0 -v -W 864 -H 480 --diffusion-fa --offload-to-cpu --rng cpu --fps 24 --video-frames 56
+.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_ref2va_pruned-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_32b_minimax_h3-Q4_K_M.gguf -p "Use the cat from <Picture 1> as the main character. Keep the cat’s appearance, fur color, facial features, and identity consistent with the reference image. Create a 2-second cinematic video: start with an extreme close-up shot of the cat’s face, focusing on its cute expression and detailed fur texture. The camera slowly rotates around the cat’s head, creating a dynamic reveal. Then smoothly pull back and zoom out to reveal the full scene: the cat is standing confidently on a surfboard, riding ocean waves. Water splashes around the board, sea breeze gently moves the cat’s fur, and the cat maintains a cute and fearless expression while surfing. Smooth camera movement, cinematic orbit shot, seamless zoom-out transition, low-angle wide shot, realistic ocean environment, golden sunlight, dynamic waves, high-quality realistic style, natural motion, no distortion, keep the cat’s identity unchanged." -r ..\assets\ernie_image\turbo_example.png --cfg-scale 1.0 -v -W 864 -H 480 --offload-to-cpu --rng cpu --fps 24 --video-frames 56
 ```
 
 <video src=../assets/minimax-h3/r2av.mp4 controls="controls" muted="muted" type="video/mp4"></video>
@@ -86,6 +90,38 @@ pixel area exceeds the requested generation canvas.
 The C API exposes the same inputs through `ref_images`, `ref_videos`, and
 `ref_audios` in `sd_vid_gen_params_t`. Each `sd_ref_video_t` supplies its own
 frame rate and optional soundtrack; non-24-fps inputs are resampled internally.
+
+## Replacing the text encoder with a small one (ClipProj)
+
+The 15.7 GB Qwen3-VL-32B text encoder can be replaced by a small Qwen3-VL
+(4B or 8B) plus a learned projection matrix into the 5120-dim conditioning
+space. This cuts the text-encoder memory footprint to that of the small model.
+
+```sh
+.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_fl2va-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_4b_bf16.safetensors --cliproj ..\models\cliproj\mmh3-4b-ClipProj-celeb-mlp.safetensors -p "A cute American Shorthair silver tabby kitten surfs on a tropical ocean wave..." --cfg-scale 1.0 -v -W 864 -H 480 --diffusion-fa --offload-to-cpu --rng cpu --fps 24 --video-frames 56
+```
+
+`--cliproj` accepts the projection matrices from
+[NicoLab28/ClipProj-MiniMax-H3](https://huggingface.co/NicoLab28/ClipProj-MiniMax-H3)
+(MIT). Use a `mmh3-4b-*` matrix with a Qwen3-VL-4B encoder (2560 dims) or a
+`mmh3-8b-*` matrix with a Qwen3-VL-8B (4096 dims); any other mismatch is
+detected and reported, and the projection is disabled. The layer index to read
+("tap") comes from the safetensors metadata, and d_in, d_out, the residual
+hidden width, and the presence of the ridge matrix `W` and of the measured
+sink vector are all detected from the tensor shapes, so the plain matrices,
+the `-mlp` ones with their fp16 residual network, the v3 matrices (ridge
+dropped, 32768-wide residual hidden), and the v3.1 matrices (sink vector
+dropped as well) work unchanged. The matrix is calibrated on bf16 encoders and applies
+to any variant of the same size, quantised or not. The small encoder itself
+may be a llama.cpp GGUF (for example an Unsloth
+`Qwen3-VL-4B-Instruct-UD-Q8_K_XL.gguf`), with the Qwen3-VL vision tower
+supplied separately as an mmproj GGUF through `--llm_vision`.
+
+Limitations are inherited from the projection: reference images/videos
+(`--ref-image`, `--ref-video`) are outside the calibration distribution, and
+the small encoder does not know everything the 32B does. The projection is
+only used when both `--llm` and `--cliproj` are given and the diffusion model
+is a MiniMax-H3 variant; otherwise it is ignored with a warning.
 
 ## Shape and runtime notes
 

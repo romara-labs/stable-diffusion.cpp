@@ -32,6 +32,8 @@ namespace sd::model_builders {
         const String2TensorStorage& tensor_storage_map;
         SDBackendManager& backends;
         std::shared_ptr<DeviceResidencyManager> weight_manager;
+        std::string cliproj_path;
+        int cliproj_tap = 24;
     };
 
     struct CoreRunners {
