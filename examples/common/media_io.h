@@ -19,6 +19,7 @@ EncodedImageFormat encoded_image_format_from_path(const std::string& path);
 // stb stores this process-wide; configure it before starting encoding threads.
 void set_png_compression_level(int level);
 
+// parameters is the core sdcpp.generation/v1 JSON; empty disables both metadata formats.
 std::vector<uint8_t> encode_image_to_vector(EncodedImageFormat format,
                                             const uint8_t* image,
                                             int width,
@@ -127,5 +128,12 @@ bool load_wav_from_file(const std::string& path,
                         std::vector<float>& interleaved_samples,
                         uint32_t& sample_rate,
                         uint32_t& channels);
+
+/** Decodes a WAV buffer (PCM 8/16/24/32 or IEEE float 32/64) into interleaved samples. */
+bool load_wav_from_memory(const uint8_t* data,
+                          size_t size,
+                          std::vector<float>& interleaved_samples,
+                          uint32_t& sample_rate,
+                          uint32_t& channels);
 
 #endif  // __MEDIA_IO_H__

@@ -316,11 +316,8 @@ namespace MiniMaxH3VAE {
         ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
             auto w1   = std::dynamic_pointer_cast<Linear>(blocks["w1"]);
             auto w2   = std::dynamic_pointer_cast<Linear>(blocks["w2"]);
-            auto gate = ggml_ext_chunk(ctx->ggml_ctx, w1->forward(ctx, x), 2, 0);
-            return w2->forward(ctx,
-                               ggml_mul(ctx->ggml_ctx,
-                                        ggml_silu(ctx->ggml_ctx, gate[0]),
-                                        gate[1]));
+            auto gate = ggml_swiglu(ctx->ggml_ctx, w1->forward(ctx, x));
+            return w2->forward(ctx, gate);
         }
     };
 
@@ -449,8 +446,8 @@ namespace MiniMaxH3VAE {
         MiniMaxH3VideoVAE() {
             blocks["encoder"]         = std::make_shared<Encoder>();
             blocks["quant_conv"]      = std::make_shared<Conv3d>(48,
-                                                            48,
-                                                            std::tuple{1, 1, 1});
+                                                                 48,
+                                                                 std::tuple{1, 1, 1});
             blocks["post_quant_conv"] = std::make_shared<Conv3d>(24,
                                                                  24,
                                                                  std::tuple{1, 1, 1});

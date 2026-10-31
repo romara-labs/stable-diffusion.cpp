@@ -295,6 +295,10 @@ bool add_rpc_devices(const std::string& servers) {
     }
     ggml_backend_reg_t rpc_reg = ggml_backend_reg_by_name("RPC");
     if (!rpc_reg) {
+        ggml_backend_load_all();
+        rpc_reg = ggml_backend_reg_by_name("RPC");
+    }
+    if (!rpc_reg) {
         LOG_ERROR("RPC backend not found, cannot add RPC servers");
         return false;
     }
@@ -307,10 +311,17 @@ bool add_rpc_devices(const std::string& servers) {
     for (const auto& server : rpc_servers) {
         LOG_INFO("Adding RPC server: %s", server.c_str());
         auto reg = ggml_backend_rpc_add_server_fn(server.c_str());
-        // no return value to check for success but should print errors from the RPC backend if it fails to add the server
+        if (!reg) {
+            LOG_ERROR("failed to add RPC server: %s", server.c_str());
+            return false;
+        }
         ggml_backend_register(reg);
     }
     return true;
+}
+
+bool sd_add_rpc_servers(const char* servers) {
+    return add_rpc_devices(servers ? servers : "");
 }
 
 static void ggml_backend_load_all_once() {
@@ -602,6 +613,32 @@ bool sd_backend_cpu_set_n_threads(ggml_backend_t backend, int n_threads) {
         }
     }
     return false;
+}
+
+void sd_backend_set_buffer_cache_enabled(ggml_backend_t backend, bool enabled) {
+    auto dev = backend != nullptr ? ggml_backend_get_device(backend) : nullptr;
+    if (dev == nullptr) {
+        return;
+    }
+    auto reg                    = ggml_backend_dev_backend_reg(dev);
+    using SetBufferCacheEnabled = void (*)(ggml_backend_t, bool);
+    auto fn                     = reinterpret_cast<SetBufferCacheEnabled>(ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_buffer_cache_enabled"));
+    if (fn != nullptr) {
+        fn(backend, enabled);
+    }
+}
+
+void sd_backend_clear_buffer_cache(ggml_backend_t backend) {
+    auto dev = backend != nullptr ? ggml_backend_get_device(backend) : nullptr;
+    if (dev == nullptr) {
+        return;
+    }
+    auto reg               = ggml_backend_dev_backend_reg(dev);
+    using ClearBufferCache = void (*)(ggml_backend_t);
+    auto fn                = reinterpret_cast<ClearBufferCache>(ggml_backend_reg_get_proc_address(reg, "ggml_backend_clear_buffer_cache"));
+    if (fn != nullptr) {
+        fn(backend);
+    }
 }
 
 static ggml_cgraph sd_ggml_graph_view(ggml_cgraph* cgraph0, int i0, int i1) {

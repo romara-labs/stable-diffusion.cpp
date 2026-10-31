@@ -84,6 +84,8 @@ documentation.
 * `examples/server/` - server application built on top of the library.
   This fork is backend-only: the webui submodule and its pnpm build were
   removed. Do not reintroduce frontend build steps when syncing with upstream.
+  Before modifying built-in recipes, read and follow
+  [the built-in recipe policy](examples/server/recipes/README.md).
 
 ### Documentation and Tooling
 

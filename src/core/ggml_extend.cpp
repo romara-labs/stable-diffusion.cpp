@@ -3,6 +3,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #include "core/ggml_extend_backend.h"
 
@@ -135,21 +136,11 @@ ggml_tensor* ggml_ext_silu_act(ggml_context* ctx, ggml_tensor* x, bool gate_firs
     // x: [ne3, ne2, ne1, ne0]
     // return: [ne3, ne2, ne1, ne0/2]
 
-    auto x_vec = ggml_ext_chunk(ctx, x, 2, 0, false);
-    ggml_tensor* gate;
-    if (gate_first) {
-        gate = x_vec[0];
-        x    = x_vec[1];
-    } else {
-        x    = x_vec[0];
-        gate = x_vec[1];
+    GGML_ASSERT(x->ne[0] % 2 == 0);
+    if (!ggml_is_contiguous_1(x)) {
+        x = ggml_cont(ctx, x);
     }
-    gate = ggml_cont(ctx, gate);
-    gate = ggml_silu_inplace(ctx, gate);
-
-    x = ggml_mul(ctx, x, gate);  // [ne3, ne2, ne1, ne0/2]
-
-    return x;
+    return gate_first ? ggml_swiglu(ctx, x) : ggml_swiglu_swapped(ctx, x);
 }
 
 ggml_tensor* ggml_ext_group_norm_32(ggml_context* ctx,
@@ -488,21 +479,33 @@ ggml_tensor* ggml_ext_conv_3d(ggml_context* ctx,
         x          = ggml_cont(ctx, ggml_permute(ctx, x, 0, 1, 3, 2));
         x          = ggml_reshape_4d(ctx, x, im2col->ne[1], im2col->ne[2], OD, OC * N);
     } else {
-        // ggml_conv_3d decomposes into GGML_OP_IM2COL_3D, which some backends
-        // (e.g. Metal, see #850) do not implement. Fall back to
-        // GGML_OP_CONV_3D on those backends.
-        bool im2col_3d_supported = true;
+        auto convolution = ggml_conv_3d(ctx, w, x, IC, s0, s1, s2, p0, p1, p2, d0, d1, d2);
         if (backend != nullptr) {
-            ggml_tensor* im2col = ggml_im2col_3d(ctx, w, x, IC, s0, s1, s2, p0, p1, p2, d0, d1, d2, w->type);
-            im2col_3d_supported = ggml_backend_supports_op(backend, im2col);
+            // im2col can support large buffers that its reshape/GEMM consumers cannot.
+            std::vector<ggml_tensor*> nodes{convolution};
+            bool supported = true;
+            for (size_t i = 0; i < nodes.size() && supported; ++i) {
+                auto node = nodes[i];
+                if (node == x || node == w) {
+                    continue;
+                }
+                supported = ggml_backend_supports_op(backend, node);
+                for (auto source : node->src) {
+                    if (source != nullptr) {
+                        nodes.push_back(source);
+                    }
+                }
+            }
+            if (!supported) {
+                int64_t OC    = w->ne[3] / IC;
+                int64_t N     = x->ne[3] / IC;
+                auto fallback = ggml_conv_3d_direct(ctx, w, x, s0, s1, s2, p0, p1, p2, d0, d1, d2, (int)IC, (int)N, (int)OC);
+                if (ggml_backend_supports_op(backend, fallback)) {
+                    convolution = fallback;
+                }
+            }
         }
-        if (im2col_3d_supported) {
-            x = ggml_conv_3d(ctx, w, x, IC, s0, s1, s2, p0, p1, p2, d0, d1, d2);
-        } else {
-            int64_t OC = w->ne[3] / IC;
-            int64_t N  = x->ne[3] / IC;
-            x          = ggml_conv_3d_direct(ctx, w, x, s0, s1, s2, p0, p1, p2, d0, d1, d2, (int)IC, (int)N, (int)OC);
-        }
+        x = convolution;
     }
 
     if (scale != 1.f) {
@@ -554,9 +557,9 @@ std::vector<ggml_tensor*> split_image_qkv(ggml_context* ctx,
     qkv         = ggml_cont(ctx, ggml_ext_torch_permute(ctx, qkv, 0, 1, 3, 2));  // [3, N, C, H*W]
 
     int64_t offset = qkv->nb[2] * qkv->ne[2];
-    auto q         = ggml_view_4d(ctx, qkv, W, H, C, N, nb1, nb2, qkv->nb[3], offset * 0);  // [N, C, H, W]
-    auto k         = ggml_view_4d(ctx, qkv, W, H, C, N, nb1, nb2, qkv->nb[3], offset * 1);  // [N, C, H, W]
-    auto v         = ggml_view_4d(ctx, qkv, W, H, C, N, nb1, nb2, qkv->nb[3], offset * 2);  // [N, C, H, W]
+    auto q         = ggml_view_4d(ctx, qkv, W, H, C, N, nb1, nb2, qkv->nb[2], offset * 0);  // [N, C, H, W]
+    auto k         = ggml_view_4d(ctx, qkv, W, H, C, N, nb1, nb2, qkv->nb[2], offset * 1);  // [N, C, H, W]
+    auto v         = ggml_view_4d(ctx, qkv, W, H, C, N, nb1, nb2, qkv->nb[2], offset * 2);  // [N, C, H, W]
     return {q, k, v};
 }
 
@@ -678,26 +681,23 @@ ggml_tensor* ggml_ext_attention_ext(ggml_context* ctx,
             // CUDA FA MMA starts at 64 channels; keep the original head's attention scale.
             q_in = ggml_pad(ctx, q_in, static_cast<int>(64 - d_head), 0, 0, 0);
             k_in = ggml_pad(ctx, k_in, static_cast<int>(64 - d_head), 0, 0, 0);
+            v_in = ggml_pad(ctx, v_in, static_cast<int>(64 - d_head), 0, 0, 0);
         }
         if (kv_scale != 1.0f) {
             k_in = ggml_ext_scale(ctx, k_in, kv_scale);
         }
         k_in = ggml_cast(ctx, k_in, GGML_TYPE_F16);
 
-        const bool strided_v_cast = N == 1 && v_in->type == GGML_TYPE_F32 &&
-                                    sd_backend_is(backend, "Vulkan");
-        v_in = ggml_permute(ctx, v_in, 0, 2, 1, 3);
-        if (!strided_v_cast) {
-            v_in = ggml_ext_cont(ctx, v_in);
-            v_in = ggml_reshape_3d(ctx, v_in, d_head, L_k, n_kv_head * N);
-        }
-        if (pad_head) {
-            v_in = ggml_pad(ctx, v_in, static_cast<int>(64 - d_head), 0, 0, 0);
-        }
         if (kv_scale != 1.0f) {
             v_in = ggml_ext_scale(ctx, v_in, kv_scale);
         }
-        v_in = ggml_cast(ctx, v_in, GGML_TYPE_F16);
+        v_in       = ggml_permute(ctx, v_in, 0, 2, 1, 3);
+        auto v_f16 = ggml_cast(ctx, v_in, GGML_TYPE_F16);
+        if (!ggml_backend_supports_op(backend, v_f16)) {
+            v_f16 = ggml_cast(ctx, ggml_ext_cont(ctx, v_in), GGML_TYPE_F16);
+        }
+        v_in = v_f16;
+        v_in = ggml_reshape_3d(ctx, v_in, v_in->ne[0], L_k, n_kv_head * N);
 
         if (mask_in != nullptr) {
             // ggml_flash_attn_ext expects the mask as a contiguous F16 tensor shaped

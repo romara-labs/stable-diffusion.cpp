@@ -73,9 +73,9 @@ namespace Krea2 {
             int64_t dim_head = head_dim();
             int64_t unit     = dim_head / 16;
             axes_dim         = {
-                        static_cast<int>(dim_head - 12 * unit),
-                        static_cast<int>(6 * unit),
-                        static_cast<int>(6 * unit),
+                static_cast<int>(dim_head - 12 * unit),
+                static_cast<int>(6 * unit),
+                static_cast<int>(6 * unit),
             };
             axes_dim_sum = axes_dim[0] + axes_dim[1] + axes_dim[2];
         }
@@ -246,8 +246,8 @@ namespace Krea2 {
                     ggml_build_forward_expand(ctx->graph, scale);
                 }
             }
-            x     = ggml_rms_norm(ctx->ggml_ctx, x, eps);
-            x     = ggml_mul_inplace(ctx->ggml_ctx, x, scale);
+            x = ggml_rms_norm(ctx->ggml_ctx, x, eps);
+            x = ggml_mul_inplace(ctx->ggml_ctx, x, scale);
             return x;
         }
     };
@@ -363,8 +363,8 @@ namespace Krea2 {
             } else {
                 out = attention_no_rope(ctx, q, k, v, mask);
             }
-            out      = ggml_mul(ctx->ggml_ctx, out, ggml_sigmoid(ctx->ggml_ctx, gate->forward(ctx, x)));
-            out      = wo->forward(ctx, out);
+            out = ggml_mul(ctx->ggml_ctx, out, ggml_sigmoid(ctx->ggml_ctx, gate->forward(ctx, x)));
+            out = wo->forward(ctx, out);
             return out;
         }
     };
@@ -462,10 +462,10 @@ namespace Krea2 {
                                                                                                         this->config.mlp_multiplier,
                                                                                                         this->config.norm_eps);
                 blocks["refiner_blocks." + std::to_string(i)]   = std::make_shared<KreaTextFusionBlock>(this->config.text_dim,
-                                                                                                      this->config.text_heads,
-                                                                                                      this->config.text_kv_heads,
-                                                                                                      this->config.mlp_multiplier,
-                                                                                                      this->config.norm_eps);
+                                                                                                        this->config.text_heads,
+                                                                                                        this->config.text_kv_heads,
+                                                                                                        this->config.mlp_multiplier,
+                                                                                                        this->config.norm_eps);
             }
             blocks["projector"] = std::make_shared<Linear>(this->config.text_layers, 1, false);
         }
@@ -688,8 +688,8 @@ namespace Krea2 {
         explicit Krea2Model(Krea2Config config)
             : config(std::move(config)) {
             blocks["first"]     = std::make_shared<Linear>(this->config.patch_size * this->config.patch_size * this->config.in_channels,
-                                                       this->config.features,
-                                                       true);
+                                                           this->config.features,
+                                                           true);
             blocks["tmlp"]      = std::make_shared<KreaTimeMLP>(this->config);
             blocks["txtfusion"] = std::make_shared<KreaTextFusionTransformer>(this->config);
             blocks["txtmlp"]    = std::make_shared<KreaTextMLP>(this->config);
@@ -789,7 +789,6 @@ namespace Krea2 {
             auto refs_ids = Rope::gen_refs_ids(patch_size, bs, 3, 1, ref_latents, ref_index_mode, 1.0f, false, 0);
             ids           = Rope::concat_ids(ids, refs_ids, bs);
         }
-
 
         Krea2RopeData data;
         const size_t n_token = ids.size();
@@ -913,7 +912,7 @@ namespace Krea2 {
             set_backend_tensor_data(rope.freq, rope_data.freq.data());
 
             auto runner_ctx                       = get_context();
-            runner_ctx.graph                         = gf;
+            runner_ctx.graph                      = gf;
             runner_ctx.param_transform_registered = param_transform_registered_;
             ggml_tensor* out                      = model.forward(&runner_ctx, x, timesteps, context, rope, ref_latents, ref_image_params.force_ref_timestep_zero);
             ggml_build_forward_expand(gf, out);
