@@ -73,8 +73,8 @@ static bool build_openai_generation_request(const httplib::Request& req,
     std::string size          = j.value("size", "");
     std::string output_format = j.value("output_format", "png");
     int output_compression    = j.value("output_compression", 100);
-    int width                 = runtime.default_gen_params->width > 0 ? runtime.default_gen_params->width : 512;
-    int height                = runtime.default_gen_params->height > 0 ? runtime.default_gen_params->height : 512;
+    auto width                = runtime.default_gen_params->width;
+    auto height               = runtime.default_gen_params->height;
     if (!size.empty()) {
         auto pos = size.find('x');
         if (pos != std::string::npos) {
@@ -132,10 +132,6 @@ static bool build_openai_edit_request(const httplib::Request& req,
 
     size_t image_count    = req.form.get_file_count("image[]");
     bool has_legacy_image = req.form.has_file("image");
-    if (image_count == 0 && !has_legacy_image) {
-        error_message = "at least one image[] required";
-        return false;
-    }
 
     std::vector<std::vector<uint8_t>> images_bytes;
     for (size_t i = 0; i < image_count; ++i) {
@@ -162,8 +158,8 @@ static bool build_openai_edit_request(const httplib::Request& req,
     }
 
     std::string size = req.form.get_field("size");
-    int width        = -1;
-    int height       = -1;
+    auto width       = runtime.default_gen_params->width;
+    auto height      = runtime.default_gen_params->height;
     if (!size.empty()) {
         auto pos = size.find('x');
         if (pos != std::string::npos) {
@@ -227,12 +223,12 @@ static bool build_openai_edit_request(const httplib::Request& req,
             mask_w, mask_h, mask_channel,
             0, 0, 1);
         request.gen_params.mask_image.reset({(uint32_t)mask_w, (uint32_t)mask_h, 1, mask_raw});
-        const sd_image_t& mask_image = request.gen_params.mask_image.get();
+        const SDImage& mask_image = request.gen_params.mask_image.get();
         request.gen_params.set_width_and_height_if_unset(mask_image.width, mask_image.height);
     } else {
         request.gen_params.mask_image.reset({
-            (uint32_t)request.gen_params.get_resolved_width(),
-            (uint32_t)request.gen_params.get_resolved_height(),
+            (uint32_t)request.gen_params.get_requested_width(),
+            (uint32_t)request.gen_params.get_requested_height(),
             1,
             nullptr,
         });
@@ -240,6 +236,10 @@ static bool build_openai_edit_request(const httplib::Request& req,
 
     if (!sd_cpp_extra_args_str.empty() && !request.gen_params.from_json_str(sd_cpp_extra_args_str)) {
         error_message = "invalid sd_cpp_extra_args";
+        return false;
+    }
+    if (images_bytes.empty() && request.gen_params.prompt_images.empty()) {
+        error_message = "at least one image[] or prompt_images in sd_cpp_extra_args required";
         return false;
     }
 
@@ -256,16 +256,17 @@ static bool execute_sync_img_gen_request(ServerRuntime& runtime,
                                          ImgGenJobRequest& request,
                                          SDImageVec& results,
                                          std::string& error_message) {
-    sd_img_gen_params_t img_gen_params = request.to_sd_img_gen_params_t();
-    int num_results                    = 0;
+    SDOptPtr img_gen_params = request.to_image_opt();
+    int num_results         = 0;
 
     {
         std::lock_guard<std::mutex> lock(*runtime.sd_ctx_mutex);
-        sd_image_generation_result_t* generated = nullptr;
-        generate_image(runtime.sd_ctx, &img_gen_params, &generated);
+        PromptImageCallbackGuard prompt_images(runtime.sd_ctx, request.gen_params);
+        sd_result_t* generated = nullptr;
+        generate_sd_image(runtime.sd_ctx, img_gen_params, &generated);
         results.adopt(generated, runtime.ctx_params->lora_model_dir);
         num_results = results.count();
-        if (!results.empty() && !apply_server_adetailer(runtime, request, img_gen_params, results)) {
+        if (!results.empty() && !apply_server_adetailer(runtime, request, results)) {
             error_message = "ADetailer failed";
             return false;
         }
@@ -287,16 +288,17 @@ static bool execute_streaming_img_gen_request(ServerRuntime& runtime,
     progress_state.active = true;
 
     SDImageVec results;
-    sd_img_gen_params_t img_gen_params = request.to_sd_img_gen_params_t();
+    SDOptPtr img_gen_params = request.to_image_opt();
 
     try {
         sink.write("data: {\"status\":\"starting\"}\n\n", 29);
 
         {
             std::lock_guard<std::mutex> lock(*runtime.sd_ctx_mutex);
+            PromptImageCallbackGuard prompt_images(runtime.sd_ctx, request.gen_params);
             sd_set_progress_callback(progress_callback_sse, &progress_state);
-            sd_image_generation_result_t* generated = nullptr;
-            generate_image(runtime.sd_ctx, &img_gen_params, &generated);
+            sd_result_t* generated = nullptr;
+            generate_sd_image(runtime.sd_ctx, img_gen_params, &generated);
             sd_set_progress_callback(nullptr, nullptr);
             results.adopt(generated, runtime.ctx_params->lora_model_dir);
         }
@@ -403,6 +405,7 @@ void register_openai_api_endpoints(httplib::Server& svr, ServerRuntime& rt) {
                         if (!model_lock.owns_lock() || !runtime->sd_ctx || model_status(*runtime).value("revision", uint64_t(0)) != model_revision) {
                             const std::string event = "data: " + json({{"error", "Model changed before streaming started"}}).dump() + "\n\n";
                             sink.write(event.c_str(), event.size());
+                            sink.done();
                             return true;
                         }
 
@@ -411,6 +414,9 @@ void register_openai_api_endpoints(httplib::Server& svr, ServerRuntime& rt) {
                             const std::string error_event = "data: " + json({{"error", stream_error}}).dump() + "\n\n";
                             sink.write(error_event.c_str(), error_event.size());
                         }
+                        // Without done() the chunked body never gets its terminating chunk and
+                        // clients such as curl report the stream as truncated.
+                        sink.done();
                         return true;
                     });
                 return;

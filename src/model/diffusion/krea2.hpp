@@ -91,11 +91,11 @@ namespace Krea2 {
                     continue;
                 }
                 if (ends_with(name, "first.weight") && tensor_storage.n_dims == 2) {
-                    config.in_channels  = tensor_storage.ne[0] / (config.patch_size * config.patch_size);
+                    config.in_channels  = tensor_storage.logical_ne0() / (config.patch_size * config.patch_size);
                     config.out_channels = config.in_channels;
                     config.features     = tensor_storage.ne[1];
                 } else if (ends_with(name, "blocks.0.attn.qknorm.qnorm.scale") && tensor_storage.n_dims == 1) {
-                    detected_head_dim = tensor_storage.ne[0];
+                    detected_head_dim = tensor_storage.logical_ne0();
                 } else if (ends_with(name, "blocks.0.attn.wq.weight") && tensor_storage.n_dims == 2) {
                     if (detected_head_dim > 0) {
                         config.heads = tensor_storage.ne[1] / detected_head_dim;
@@ -105,11 +105,11 @@ namespace Krea2 {
                         config.kv_heads = tensor_storage.ne[1] / detected_head_dim;
                     }
                 } else if (ends_with(name, "txtfusion.projector.weight") && tensor_storage.n_dims == 2) {
-                    config.text_layers = tensor_storage.ne[0];
+                    config.text_layers = tensor_storage.logical_ne0();
                 } else if (ends_with(name, "txtfusion.layerwise_blocks.0.prenorm.scale") && tensor_storage.n_dims == 1) {
-                    config.text_dim = tensor_storage.ne[0];
+                    config.text_dim = tensor_storage.logical_ne0();
                 } else if (ends_with(name, "txtfusion.layerwise_blocks.0.attn.qknorm.qnorm.scale") && tensor_storage.n_dims == 1) {
-                    detected_text_head_dim = tensor_storage.ne[0];
+                    detected_text_head_dim = tensor_storage.logical_ne0();
                 } else if (ends_with(name, "txtfusion.layerwise_blocks.0.attn.wq.weight") && tensor_storage.n_dims == 2) {
                     if (detected_text_head_dim > 0) {
                         config.text_heads = tensor_storage.ne[1] / detected_text_head_dim;
@@ -232,7 +232,7 @@ namespace Krea2 {
         ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
             ggml_tensor* scale = params["scale"];
             if (ctx->weight_adapter) {
-                scale = ctx->weight_adapter->patch_weight(ctx->ggml_ctx, ctx->backend, scale, prefix + "scale.weight");
+                scale = ctx->weight_adapter->patch_weight(ctx, scale, prefix + "scale.weight");
             }
             // The stored weight is an offset from identity, so the effective scale is w+1.
             // When the loader has already folded the 1 in, the mul's operand is a plain leaf
@@ -241,7 +241,7 @@ namespace Krea2 {
             // final DFS it lands BETWEEN the rms_norm and the mul, and the fusion check is
             // positional, so the fusion would silently never fire.
             if (!ctx->param_transform_registered) {
-                scale = ggml_add(ctx->ggml_ctx, scale, ggml_ext_ones(ctx->ggml_ctx, scale->ne[0], 1, 1, 1));
+                scale = ggml_add(ctx->ggml_ctx, scale, ggml_ext_ones(ctx, scale->ne[0], 1, 1, 1));
                 if (ctx->graph != nullptr) {
                     ggml_build_forward_expand(ctx->graph, scale);
                 }
@@ -331,9 +331,7 @@ namespace Krea2 {
             auto knorm = std::dynamic_pointer_cast<KreaRMSNorm>(blocks["qknorm.knorm"]);
             auto wo    = std::dynamic_pointer_cast<Linear>(blocks["wo"]);
 
-            if (sd_backend_is(ctx->backend, "Vulkan") || sd_backend_is(ctx->backend, "ROCm")) {
-                wo->set_force_prec_f32(true);
-            }
+            wo->set_precision_flags(GGML_PRECISION_F32_VULKAN | GGML_PRECISION_F32_ROCM);
 
             int64_t L = x->ne[1];
             int64_t N = x->ne[2];
@@ -359,7 +357,7 @@ namespace Krea2 {
             if (rope.enabled()) {
                 q   = apply_krea2_rope(ctx->ggml_ctx, q, rope);  // [d_head, L, heads*N]
                 k   = apply_krea2_rope(ctx->ggml_ctx, k, rope);  // [d_head, L, kv_heads*N]
-                out = ggml_ext_attention_ext(ctx->ggml_ctx, ctx->backend, q, k, v, heads, mask, true, ctx->flash_attn_enabled);
+                out = ggml_ext_attention_ext(ctx, q, k, v, heads, mask, true, ctx->flash_attn_enabled);
             } else {
                 out = attention_no_rope(ctx, q, k, v, mask);
             }
@@ -387,14 +385,14 @@ namespace Krea2 {
         std::vector<ggml_tensor*> forward(GGMLRunnerContext* ctx, ggml_tensor* vec) {
             auto lin = params["lin"];
             if (ctx->weight_adapter) {
-                lin = ctx->weight_adapter->patch_weight(ctx->ggml_ctx, ctx->backend, lin, prefix + "lin.weight");
+                lin = ctx->weight_adapter->patch_weight(ctx, lin, prefix + "lin.weight");
             }
             lin      = ggml_repeat(ctx->ggml_ctx, lin, vec);
             auto out = ggml_add(ctx->ggml_ctx, vec, lin);
             if (ctx->graph != nullptr) {
                 ggml_build_forward_expand(ctx->graph, out);
             }
-            return ggml_ext_chunk(ctx->ggml_ctx, out, 6, 0);
+            return ggml_ext_chunk(ctx, out, 6, 0);
         }
     };
 
@@ -416,10 +414,10 @@ namespace Krea2 {
         std::vector<ggml_tensor*> forward(GGMLRunnerContext* ctx, ggml_tensor* vec) {
             auto lin = params["lin"];
             if (ctx->weight_adapter) {
-                lin = ctx->weight_adapter->patch_weight(ctx->ggml_ctx, ctx->backend, lin, prefix + "lin.weight");
+                lin = ctx->weight_adapter->patch_weight(ctx, lin, prefix + "lin.weight");
             }
             auto out = ggml_add(ctx->ggml_ctx, lin, vec);
-            return ggml_ext_chunk(ctx->ggml_ctx, out, 2, 1);
+            return ggml_ext_chunk(ctx, out, 2, 1);
         }
     };
 
@@ -539,8 +537,8 @@ namespace Krea2 {
                 auto pre_x_main = ggml_view_3d(ctx->ggml_ctx, pre_x, D, len_main, B, nb1, nb2, 0);
                 auto pre_x_refs = ggml_view_3d(ctx->ggml_ctx, pre_x, D, len_refs, B, nb1, nb2, len_main * nb1);
 
-                auto attn_in_main = Flux::modulate(ctx->ggml_ctx, pre_x_main, mods_main[1], mods_main[0], true);
-                auto attn_in_refs = Flux::modulate(ctx->ggml_ctx, pre_x_refs, mods_refs[1], mods_refs[0], true);
+                auto attn_in_main = Flux::modulate(ctx, pre_x_main, mods_main[1], mods_main[0], true);
+                auto attn_in_refs = Flux::modulate(ctx, pre_x_refs, mods_refs[1], mods_refs[0], true);
 
                 auto attn_input = ggml_concat(ctx->ggml_ctx, attn_in_main, attn_in_refs, 1);
 
@@ -561,8 +559,8 @@ namespace Krea2 {
                 auto post_x_main = ggml_view_3d(ctx->ggml_ctx, post_x, D, len_main, B, post_x->nb[1], post_x->nb[2], 0);
                 auto post_x_refs = ggml_view_3d(ctx->ggml_ctx, post_x, D, len_refs, B, post_x->nb[1], post_x->nb[2], len_main * post_x->nb[1]);
 
-                auto mlp_in_main = Flux::modulate(ctx->ggml_ctx, post_x_main, mods_main[4], mods_main[3], true);
-                auto mlp_in_refs = Flux::modulate(ctx->ggml_ctx, post_x_refs, mods_refs[4], mods_refs[3], true);
+                auto mlp_in_main = Flux::modulate(ctx, post_x_main, mods_main[4], mods_main[3], true);
+                auto mlp_in_refs = Flux::modulate(ctx, post_x_refs, mods_refs[4], mods_refs[3], true);
 
                 auto mlp_input = ggml_concat(ctx->ggml_ctx, mlp_in_main, mlp_in_refs, 1);
                 auto mlp_out   = mlp->forward(ctx, mlp_input);
@@ -577,7 +575,7 @@ namespace Krea2 {
                 x            = ggml_add(ctx->ggml_ctx, x, mlp_res);
             } else {
                 auto mods       = mod->forward(ctx, vec);
-                auto attn_input = Flux::modulate(ctx->ggml_ctx,
+                auto attn_input = Flux::modulate(ctx,
                                                  prenorm->forward(ctx, x),
                                                  mods[1],
                                                  mods[0],
@@ -585,7 +583,7 @@ namespace Krea2 {
                 auto attn_out   = attn->forward(ctx, attn_input, rope);
                 x               = ggml_add(ctx->ggml_ctx, x, ggml_mul(ctx->ggml_ctx, attn_out, mods[2]));
 
-                auto mlp_input = Flux::modulate(ctx->ggml_ctx,
+                auto mlp_input = Flux::modulate(ctx,
                                                 postnorm->forward(ctx, x),
                                                 mods[4],
                                                 mods[3],
@@ -615,7 +613,7 @@ namespace Krea2 {
             auto linear_0 = std::dynamic_pointer_cast<Linear>(blocks["0"]);
             auto linear_2 = std::dynamic_pointer_cast<Linear>(blocks["2"]);
             x             = linear_0->forward(ctx, x);
-            x             = ggml_ext_gelu(ctx->ggml_ctx, x, false);
+            x             = ggml_ext_gelu(ctx, x, false);
             x             = linear_2->forward(ctx, x);
             return x;
         }
@@ -629,7 +627,7 @@ namespace Krea2 {
 
         ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
             auto linear_1 = std::dynamic_pointer_cast<Linear>(blocks["1"]);
-            x             = ggml_ext_gelu(ctx->ggml_ctx, x, false);
+            x             = ggml_ext_gelu(ctx, x, false);
             x             = linear_1->forward(ctx, x);
             return x;
         }
@@ -649,7 +647,7 @@ namespace Krea2 {
             auto linear_3 = std::dynamic_pointer_cast<Linear>(blocks["3"]);
             x             = norm->forward(ctx, x);
             x             = linear_1->forward(ctx, x);
-            x             = ggml_ext_gelu(ctx->ggml_ctx, x, true);
+            x             = ggml_ext_gelu(ctx, x, true);
             x             = linear_3->forward(ctx, x);
             return x;
         }
@@ -669,7 +667,7 @@ namespace Krea2 {
             auto modulation = std::dynamic_pointer_cast<KreaFinalModulation>(blocks["modulation"]);
 
             auto mods = modulation->forward(ctx, vec);
-            x         = Flux::modulate(ctx->ggml_ctx,
+            x         = Flux::modulate(ctx,
                                        norm->forward(ctx, x),
                                        mods[1],
                                        mods[0],
@@ -730,7 +728,7 @@ namespace Krea2 {
             int64_t ref_len = img->ne[1] - img_len;
             img             = first->forward(ctx, img);
 
-            auto t    = ggml_ext_timestep_embedding(ctx->ggml_ctx, timestep, static_cast<int>(config.timestep_dim), 10000, 1000.f);
+            auto t    = ggml_ext_timestep_embedding(ctx, timestep, static_cast<int>(config.timestep_dim), 10000, 1000.f);
             t         = tmlp->forward(ctx, t);
             t         = ggml_reshape_3d(ctx->ggml_ctx, t, t->ne[0], 1, t->ne[1]);
             auto tvec = tproj->forward(ctx, t);
@@ -739,7 +737,7 @@ namespace Krea2 {
             if (ref_latents.size() > 0 && zero_timestep_refs) {
                 // "index_timestep_zero" mode: use timestep = 0 for ref latents
                 auto timestep_0 = ggml_scale(ctx->ggml_ctx, timestep, 0.0f);
-                auto t_0        = ggml_ext_timestep_embedding(ctx->ggml_ctx, timestep_0, static_cast<int>(config.timestep_dim), 10000, 1000.f);
+                auto t_0        = ggml_ext_timestep_embedding(ctx, timestep_0, static_cast<int>(config.timestep_dim), 10000, 1000.f);
                 t_0             = tmlp->forward(ctx, t_0);
                 t_0             = ggml_reshape_3d(ctx->ggml_ctx, t_0, t_0->ne[0], 1, t_0->ne[1]);
                 tvec_0          = tproj->forward(ctx, t_0);
@@ -757,9 +755,9 @@ namespace Krea2 {
                 sd::ggml_graph_cut::mark_graph_cut(hidden_states, "krea2.blocks." + std::to_string(i), "hidden_states");
             }
 
-            hidden_states = ggml_ext_slice(ctx->ggml_ctx, hidden_states, 1, txt_len, txt_len + img_len);
+            hidden_states = ggml_ext_slice(ctx, hidden_states, 1, txt_len, txt_len + img_len);
             hidden_states = last->forward(ctx, hidden_states, t);
-            hidden_states = DiT::unpatchify_and_crop(ctx->ggml_ctx, hidden_states, H, W, config.patch_size, config.patch_size, true);
+            hidden_states = DiT::unpatchify_and_crop(ctx, hidden_states, H, W, config.patch_size, config.patch_size, true);
             return hidden_states;
         }
     };

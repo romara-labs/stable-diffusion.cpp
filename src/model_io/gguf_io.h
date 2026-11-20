@@ -14,6 +14,8 @@ bool is_gguf_file(const std::string& file_path);
 bool read_gguf_file(const std::string& file_path,
                     std::vector<TensorStorage>& tensor_storages,
                     std::string* error = nullptr);
+// Reads one integer-valued KV (any signed or unsigned integer type) from the GGUF header.
+bool read_gguf_int_metadata(const std::string& file_path, const std::string& key, int64_t* value);
 bool write_gguf_file(const std::string& file_path,
                      const std::vector<TensorWriteInfo>& tensors,
                      std::string* error = nullptr);

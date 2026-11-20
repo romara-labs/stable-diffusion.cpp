@@ -23,13 +23,15 @@
 //     cond = (((h - mean_in) / std_in) @ W + mlp((h - mean_in) / std_in))
 //            * std_out + mean_out
 //
-// plus the attention-sink vector substituted at token 0. The file is a plain
-// .safetensors holding W, mean_in, std_in, mean_out, std_out, sink_out,
-// mlp.0.weight/bias, mlp.2.weight/bias and the scalar metadata "tap" (layer
-// index of the small encoder to read). The v3 matrices dropped W after the
-// residual network subsumed the ridge fit, and widened mlp.0 to 32768 hidden
-// units; v3.1 additionally dropped the measured sink vector. All variants are
-// detected from the file.
+// plus the attention-sink vector substituted at token 0. The file is a
+// .safetensors (or a GGUF with the "clipproj" architecture) holding mean_in,
+// std_in, mean_out, std_out and the scalar "tap" (layer index of the small
+// encoder to read). W (ridge matrix), the residual network mlp.0/mlp.2
+// weight/bias and sink_out are each optional: the plain ridge files carry W
+// and sink_out only, the v3 matrices dropped W after the residual network
+// subsumed the ridge fit and widened mlp.0 to 32768 hidden units, and v3.1
+// "-mlp" additionally dropped the measured sink vector. All variants are
+// detected from the file, with at least one of W or the residual network.
 namespace ClipProj {
 
 // The projection file stores W in PyTorch layout [d_in, d_out]. After the
@@ -46,9 +48,13 @@ namespace ClipProj {
 
         ClipProj(int64_t d_in_, int64_t d_out_, int64_t mlp_hidden_)
             : d_in(d_in_), d_out(d_out_), mlp_hidden(mlp_hidden_) {
-            blocks["mlp.0"] = std::make_shared<Linear>(d_in, mlp_hidden, true);
-            blocks["mlp.2"] = std::make_shared<Linear>(mlp_hidden, d_out, true);
+            if (mlp_hidden > 0) {
+                blocks["mlp.0"] = std::make_shared<Linear>(d_in, mlp_hidden, true);
+                blocks["mlp.2"] = std::make_shared<Linear>(mlp_hidden, d_out, true);
+            }
         }
+
+        bool has_residual() const { return mlp_hidden > 0; }
 
         void init_params(ggml_context* ctx, const String2TensorStorage& tensor_storage_map = {}, const std::string prefix = "") override {
             GGMLBlock::init_params(ctx, tensor_storage_map, prefix);
@@ -72,26 +78,29 @@ namespace ClipProj {
 
         ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
             // x: [d_in, n_token]
-            auto mlp0 = std::dynamic_pointer_cast<Linear>(blocks["mlp.0"]);
-            auto mlp2 = std::dynamic_pointer_cast<Linear>(blocks["mlp.2"]);
-
             // Standardised space, where the ridge was fitted.
             auto xn = ggml_div(ctx->ggml_ctx,
                                ggml_sub(ctx->ggml_ctx, x, params["mean_in"]),
                                params["std_in"]);  // [d_in, n_token]
 
-            // The residual network keeps the dtype it was saved in (fp16 in the
-            // published matrices); inputs and outputs are converted around it.
-            auto res = mlp2->forward(ctx,
-                                     ggml_gelu(ctx->ggml_ctx,
-                                               mlp0->forward(ctx,
-                                                             ggml_cast(ctx->ggml_ctx, xn, GGML_TYPE_F16))));
-            ggml_tensor* sum = ggml_cast(ctx->ggml_ctx, res, GGML_TYPE_F32);
+            ggml_tensor* sum = nullptr;
+            if (has_residual()) {
+                // The residual network keeps the dtype it was saved in (fp16 in the
+                // published matrices); inputs and outputs are converted around it.
+                auto mlp0 = std::dynamic_pointer_cast<Linear>(blocks["mlp.0"]);
+                auto mlp2 = std::dynamic_pointer_cast<Linear>(blocks["mlp.2"]);
+                auto res  = mlp2->forward(ctx,
+                                          ggml_gelu(ctx->ggml_ctx,
+                                                    mlp0->forward(ctx,
+                                                                  ggml_cast(ctx->ggml_ctx, xn, GGML_TYPE_F16))));
+                sum       = ggml_cast(ctx->ggml_ctx, res, GGML_TYPE_F32);
+            }
             if (has_ridge) {
                 auto w  = ggml_cont(ctx->ggml_ctx, ggml_transpose(ctx->ggml_ctx, params["W"]));
-                auto yn = ggml_ext_linear(ctx->ggml_ctx, xn, w, nullptr);  // [d_out, n_token]
-                sum     = ggml_add(ctx->ggml_ctx, yn, sum);
+                auto yn = ggml_ext_linear(ctx, xn, w, nullptr);  // [d_out, n_token]
+                sum     = sum == nullptr ? yn : ggml_add(ctx->ggml_ctx, yn, sum);
             }
+            GGML_ASSERT(sum != nullptr);
             auto cond = ggml_add(ctx->ggml_ctx,
                                  ggml_mul(ctx->ggml_ctx, sum, params["std_out"]),
                                  params["mean_out"]);  // [d_out, n_token]
@@ -106,7 +115,7 @@ namespace ClipProj {
             }
             if (x->ne[1] > 1) {
                 auto head = ggml_reshape_2d(ctx->ggml_ctx, params["sink_out"], d_out, 1);
-                auto tail = ggml_ext_slice(ctx->ggml_ctx, cond, 1, 1, x->ne[1]);
+                auto tail = ggml_ext_slice(ctx, cond, 1, 1, x->ne[1]);
                 return ggml_concat(ctx->ggml_ctx, head, tail, 1);
             }
             return ggml_reshape_2d(ctx->ggml_ctx, params["sink_out"], d_out, 1);
@@ -126,21 +135,54 @@ namespace ClipProj {
 
         static Dims infer_dims(const String2TensorStorage& tensor_storage_map,
                                const std::string& prefix) {
-            auto mlp0 = tensor_storage_map.find(prefix + ".mlp.0.weight");
-            auto mlp2 = tensor_storage_map.find(prefix + ".mlp.2.weight");
-            if (mlp0 == tensor_storage_map.end() || mlp2 == tensor_storage_map.end()) {
-                LOG_ERROR("cliproj: projection file has no '%s.mlp.0.weight' or '%s.mlp.2.weight' tensor",
+            // The file stores weights as torch [rows, cols]; the readers reverse the
+            // axes, so ggml ne[0] is the torch last dim. mean_in / mean_out carry
+            // d_in / d_out in every variant, with or without W.
+            auto mean_in  = tensor_storage_map.find(prefix + ".mean_in");
+            auto mean_out = tensor_storage_map.find(prefix + ".mean_out");
+            for (const char* name : {"std_in", "std_out"}) {
+                if (tensor_storage_map.find(prefix + "." + name) == tensor_storage_map.end()) {
+                    LOG_ERROR("cliproj: projection file has no '%s.%s' tensor", prefix.c_str(), name);
+                    return {0, 0, 0};
+                }
+            }
+            if (mean_in == tensor_storage_map.end() || mean_out == tensor_storage_map.end()) {
+                LOG_ERROR("cliproj: projection file has no '%s.mean_in' or '%s.mean_out' tensor",
                           prefix.c_str(), prefix.c_str());
                 return {0, 0, 0};
             }
-            // The file stores weights as torch [rows, cols]; the safetensors
-            // reader reverses the axes, so ggml ne[0] is the torch last dim.
-            auto w = tensor_storage_map.find(prefix + ".W");
-            return {
-                w != tensor_storage_map.end() ? w->second.ne[1] : mlp0->second.ne[0],
-                w != tensor_storage_map.end() ? w->second.ne[0] : mlp2->second.ne[1],
-                mlp0->second.ne[1],
-            };
+            const int64_t d_in  = mean_in->second.ne[0];
+            const int64_t d_out = mean_out->second.ne[0];
+
+            auto w    = tensor_storage_map.find(prefix + ".W");
+            auto mlp0 = tensor_storage_map.find(prefix + ".mlp.0.weight");
+            auto mlp2 = tensor_storage_map.find(prefix + ".mlp.2.weight");
+            const bool has_mlp0 = mlp0 != tensor_storage_map.end();
+            const bool has_mlp2 = mlp2 != tensor_storage_map.end();
+            if (has_mlp0 != has_mlp2) {
+                LOG_ERROR("cliproj: projection file has only one of '%s.mlp.0.weight' and '%s.mlp.2.weight'",
+                          prefix.c_str(), prefix.c_str());
+                return {0, 0, 0};
+            }
+            if (w == tensor_storage_map.end() && !has_mlp0) {
+                LOG_ERROR("cliproj: projection file has neither '%s.W' nor a residual network", prefix.c_str());
+                return {0, 0, 0};
+            }
+            if (w != tensor_storage_map.end() && (w->second.ne[1] != d_in || w->second.ne[0] != d_out)) {
+                LOG_ERROR("cliproj: W is [%lld, %lld] but mean_in/mean_out say [%lld, %lld]",
+                          static_cast<long long>(w->second.ne[1]), static_cast<long long>(w->second.ne[0]),
+                          static_cast<long long>(d_in), static_cast<long long>(d_out));
+                return {0, 0, 0};
+            }
+            int64_t mlp_hidden = 0;
+            if (has_mlp0) {
+                mlp_hidden = mlp0->second.ne[1];
+                if (mlp0->second.ne[0] != d_in || mlp2->second.ne[0] != mlp_hidden || mlp2->second.ne[1] != d_out) {
+                    LOG_ERROR("cliproj: residual network shapes disagree with mean_in/mean_out");
+                    return {0, 0, 0};
+                }
+            }
+            return {d_in, d_out, mlp_hidden};
         }
 
     public:
@@ -201,6 +243,10 @@ namespace ClipProj {
             : GGMLRunner(backend, weight_manager),
               model(dims.d_in, dims.d_out, dims.mlp_hidden),
               tap(tap_) {
+            if (dims.d_in <= 0 || dims.d_out <= 0) {
+                enabled = false;
+                return;
+            }
             model.init(params_ctx, tensor_storage_map, prefix);
             LOG_INFO("cliproj: d_in=%lld d_out=%lld mlp_hidden=%lld ridge=%d sink=%d tap=%d",
                      static_cast<long long>(model.d_in),

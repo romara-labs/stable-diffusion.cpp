@@ -125,6 +125,49 @@ static bool apply_comfy_orig_shapes(const gguf_context* ctx_gguf,
     return true;
 }
 
+bool read_gguf_int_metadata(const std::string& file_path, const std::string& key, int64_t* value) {
+    gguf_context* ctx = gguf_init_from_file(file_path.c_str(), {true, nullptr});
+    if (ctx == nullptr) {
+        return false;
+    }
+    bool found       = false;
+    const int64_t id = gguf_find_key(ctx, key.c_str());
+    if (id >= 0) {
+        found = true;
+        switch (gguf_get_kv_type(ctx, id)) {
+            case GGUF_TYPE_UINT8:
+                *value = gguf_get_val_u8(ctx, id);
+                break;
+            case GGUF_TYPE_INT8:
+                *value = gguf_get_val_i8(ctx, id);
+                break;
+            case GGUF_TYPE_UINT16:
+                *value = gguf_get_val_u16(ctx, id);
+                break;
+            case GGUF_TYPE_INT16:
+                *value = gguf_get_val_i16(ctx, id);
+                break;
+            case GGUF_TYPE_UINT32:
+                *value = gguf_get_val_u32(ctx, id);
+                break;
+            case GGUF_TYPE_INT32:
+                *value = gguf_get_val_i32(ctx, id);
+                break;
+            case GGUF_TYPE_UINT64:
+                *value = static_cast<int64_t>(gguf_get_val_u64(ctx, id));
+                break;
+            case GGUF_TYPE_INT64:
+                *value = gguf_get_val_i64(ctx, id);
+                break;
+            default:
+                found = false;
+                break;
+        }
+    }
+    gguf_free(ctx);
+    return found;
+}
+
 bool read_gguf_file(const std::string& file_path,
                     std::vector<TensorStorage>& tensor_storages,
                     std::string* error) {
