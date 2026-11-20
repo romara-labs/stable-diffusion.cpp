@@ -1,6 +1,5 @@
 #include "model/diffusion/minimax_h3.hpp"
 #include "conditioning/conditioner.hpp"
-#include "model/adapter/cliproj.hpp"
 #include "model_definition.h"
 #include "pipeline/model_builders.h"
 
@@ -9,27 +8,18 @@ static bool build_minimax_h3(const sd::model_builders::Context& ctx, const Token
     const auto& tensor_storage_map = ctx.tensor_storage_map;
     const auto version             = ctx.version;
     const auto& weight_manager     = ctx.weight_manager;
-    std::shared_ptr<ClipProj::ClipProjRunner> cliproj_runner;
-    if (!ctx.cliproj_path.empty()) {
-        cliproj_runner = std::make_shared<ClipProj::ClipProjRunner>(ctx.backends.runtime_backend(SDBackendModule::TE),
-                                                                    tensor_storage_map,
-                                                                    "cliproj",
-                                                                    ctx.cliproj_tap,
-                                                                    weight_manager);
-    }
-    result.conditioner = std::make_shared<LLMEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
-                                                       tensor_storage_map,
-                                                       version,
-                                                       "",
-                                                       true,
-                                                       weight_manager,
-                                                       tokenizers,
-                                                       cliproj_runner);
-    result.diffusion   = std::make_shared<MiniMaxH3::MiniMaxH3Runner>(ctx.backends.runtime_backend(SDBackendModule::DIFFUSION),
-                                                                      tensor_storage_map,
-                                                                      "model.diffusion_model",
-                                                                      weight_manager,
-                                                                      sd_ctx_params->model_args);
+    result.conditioner             = std::make_shared<LLMEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
+                                                                   tensor_storage_map,
+                                                                   version,
+                                                                   "",
+                                                                   true,
+                                                                   weight_manager,
+                                                                   tokenizers);
+    result.diffusion               = std::make_shared<MiniMaxH3::MiniMaxH3Runner>(ctx.backends.runtime_backend(SDBackendModule::DIFFUSION),
+                                                                                  tensor_storage_map,
+                                                                                  "model.diffusion_model",
+                                                                                  weight_manager,
+                                                                                  sd_ctx_params->model_args);
     return true;
 }
 

@@ -2,7 +2,6 @@
 #define __MODEL_MANAGER_H__
 
 #include <cstdint>
-#include <functional>
 #include <list>
 #include <map>
 #include <memory>
@@ -31,15 +30,6 @@ public:
         ModelLoader::FileId file_id = 0;
         uint64_t file_revision      = 0;
     };
-
-    // Applied in place to each parameter right after it is loaded into the params backend.
-    // Lets a model bake a layout change into its weights once instead of paying for it in
-    // every graph. Scoped by the `desc` used at registration, and re-run on reload: a LoRA
-    // change releases all params storage, so the reload path transforms the fresh copy.
-    // `loras_active` warns the callee that a LoRA delta will be added to this weight, so a
-    // transform that a delta cannot commute with (e.g. a permutation) must decline.
-    using ParamTransformFn = std::function<void(const std::string& name, ggml_tensor* tensor, bool loras_active)>;
-    void set_param_transform(ModelComponent component, ParamTransformFn fn);
 
 private:
     static constexpr size_t MAX_RESIDENCY_BLOCK_BYTES = 1024ULL * 1024ULL * 1024ULL;
@@ -127,7 +117,6 @@ private:
     bool writable_mmap_              = false;
     bool segmented_compute_disabled_ = false;
     bool prefetch_disabled_          = false;
-    std::map<ModelComponent, ParamTransformFn> param_transforms_;
 
     void finish_compute_backend_usage(const std::vector<TensorState*>& states);
     void release_all();
@@ -180,7 +169,6 @@ private:
     bool unregister_tensor_states(const std::unordered_set<TensorState*>& states, size_t* size);
     size_t other_runtime_resident_bytes(uintptr_t owner_id,
                                         ggml_backend_t compute_backend) const;
-    void apply_param_transforms(const std::vector<TensorState*>& states);
 
 public:
     ~ModelManager() override;

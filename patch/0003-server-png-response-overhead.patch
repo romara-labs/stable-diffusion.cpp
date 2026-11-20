@@ -1,0 +1,81 @@
+diff --git a/examples/common/media_io.cpp b/examples/common/media_io.cpp
+index 4159e46..523fe9f 100644
+--- a/examples/common/media_io.cpp
++++ b/examples/common/media_io.cpp
+@@ -42,6 +42,10 @@
+ 
+ namespace fs = std::filesystem;
+ 
++void set_png_compression_level(int level) {
++    stbi_write_png_compression_level = std::clamp(level, 0, 9);
++}
++
+ #ifdef SD_USE_WEBP
+ struct WebPFreeDeleter {
+     void operator()(void* ptr) const {
+diff --git a/examples/common/media_io.h b/examples/common/media_io.h
+index d765db7..716d524 100644
+--- a/examples/common/media_io.h
++++ b/examples/common/media_io.h
+@@ -16,6 +16,9 @@ enum class EncodedImageFormat {
+ 
+ EncodedImageFormat encoded_image_format_from_path(const std::string& path);
+ 
++// stb stores this process-wide; configure it before starting encoding threads.
++void set_png_compression_level(int level);
++
+ // parameters is the core sdcpp.generation/v1 JSON; empty disables both metadata formats.
+ std::vector<uint8_t> encode_image_to_vector(EncodedImageFormat format,
+                                             const uint8_t* image,
+diff --git a/examples/server/runtime.cpp b/examples/server/runtime.cpp
+index 6ac3866..e8a86d7 100644
+--- a/examples/server/runtime.cpp
++++ b/examples/server/runtime.cpp
+@@ -211,6 +211,7 @@ static const std::string k_base64_chars =
+ 
+ std::string base64_encode(const std::vector<uint8_t>& bytes) {
+     std::string ret;
++    ret.reserve(((bytes.size() + 2) / 3) * 4);
+     int val  = 0;
+     int valb = -6;
+     for (uint8_t c : bytes) {
+@@ -374,6 +375,7 @@ ArgOptions SDSvrParams::get_options() {
+ 
+     options.int_options = {
+         {"", "--listen-port", "server listen port (default: 1234)", &listen_port},
++        {"", "--png-compression-level", "PNG compression level, 0-9 (default: 4)", &png_compression_level},
+         {"", "--max-pending-jobs",
+          "maximum number of pending async jobs (default: 64)",
+          &max_pending_jobs},
+@@ -417,6 +419,11 @@ bool SDSvrParams::validate() {
+         return false;
+     }
+ 
++    if (png_compression_level < 0 || png_compression_level > 9) {
++        LOG_ERROR("error: png_compression_level should be in the range [0, 9]");
++        return false;
++    }
++
+     if (max_pending_jobs <= 0) {
+         LOG_ERROR("error: max_pending_jobs must be greater than 0");
+         return false;
+@@ -447,6 +454,7 @@ std::string SDSvrParams::to_string() const {
+         << "  log_level: " << log_level_name(log_level) << ",\n"
+         << "  listen_ip: " << listen_ip << ",\n"
+         << "  listen_port: \"" << listen_port << "\",\n"
++        << "  png_compression_level: " << png_compression_level << ",\n"
+         << "  max_pending_jobs: " << max_pending_jobs << ",\n"
+         << "  completed_ttl_seconds: " << completed_ttl_seconds << ",\n"
+         << "  serve_html_path: \"" << serve_html_path << "\",\n"
+diff --git a/examples/server/runtime.h b/examples/server/runtime.h
+index abb9766..e3ec420 100644
+--- a/examples/server/runtime.h
++++ b/examples/server/runtime.h
+@@ -25,6 +25,7 @@ struct SDSvrParams {
+     int max_pending_jobs      = 64;
+     int completed_ttl_seconds = 600;
+     std::string serve_html_path;
++    int png_compression_level = 4;
+     std::vector<std::string> model_dirs;
+     bool normal_exit         = false;
+     sd_log_level_t log_level = SD_LOG_INFO;

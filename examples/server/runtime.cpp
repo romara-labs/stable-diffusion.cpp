@@ -211,7 +211,6 @@ static const std::string k_base64_chars =
 
 std::string base64_encode(const std::vector<uint8_t>& bytes) {
     std::string ret;
-    ret.reserve(((bytes.size() + 2) / 3) * 4);
     int val  = 0;
     int valb = -6;
     for (uint8_t c : bytes) {
@@ -375,7 +374,6 @@ ArgOptions SDSvrParams::get_options() {
 
     options.int_options = {
         {"", "--listen-port", "server listen port (default: 1234)", &listen_port},
-        {"", "--png-compression-level", "PNG compression level, 0-9 (default: 4)", &png_compression_level},
         {"", "--max-pending-jobs",
          "maximum number of pending async jobs (default: 64)",
          &max_pending_jobs},
@@ -419,11 +417,6 @@ bool SDSvrParams::validate() {
         return false;
     }
 
-    if (png_compression_level < 0 || png_compression_level > 9) {
-        LOG_ERROR("error: png_compression_level should be in the range [0, 9]");
-        return false;
-    }
-
     if (max_pending_jobs <= 0) {
         LOG_ERROR("error: max_pending_jobs must be greater than 0");
         return false;
@@ -454,7 +447,6 @@ std::string SDSvrParams::to_string() const {
         << "  log_level: " << log_level_name(log_level) << ",\n"
         << "  listen_ip: " << listen_ip << ",\n"
         << "  listen_port: \"" << listen_port << "\",\n"
-        << "  png_compression_level: " << png_compression_level << ",\n"
         << "  max_pending_jobs: " << max_pending_jobs << ",\n"
         << "  completed_ttl_seconds: " << completed_ttl_seconds << ",\n"
         << "  serve_html_path: \"" << serve_html_path << "\",\n"

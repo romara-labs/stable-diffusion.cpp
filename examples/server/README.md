@@ -1,18 +1,14 @@
 # stable-diffusion.cpp Server
 
-`sd-server` provides HTTP APIs for image and video generation and model
-management. This fork ships a **backend-only server**: no web frontend is
-embedded, and building it does not require Node.js or pnpm. Download or build
-the server before starting; see the [build guide](../../docs/build.md). To use
-a web page with it, serve an external one with `--serve-html-path` (see
-[Using an external frontend](#using-an-external-frontend)).
+`sd-server` provides a Web UI for image and video generation, model management,
+and HTTP APIs. Download or build the server before starting; see the
+[build guide](../../docs/build.md) and [frontend build instructions](#build-with-frontend).
 
-- [Start the server](#start-the-server): launchers and direct execution.
-- [Load a model and generate](#load-a-model-and-generate): the API-driven workflow.
+- [Web UI](#web-ui): start the server, load a model, and generate.
 - [Model management](#model-management): model directories, recipes, and startup models.
 - [Server configuration](#server-configuration): launcher settings, network, logging, and help.
 - [API](#api): native and compatibility endpoints.
-- [Using an external frontend](#using-an-external-frontend): serve a custom Web UI.
+- [Frontend development](#frontend-development): build or customize the Web UI.
 
 Inference settings follow this priority: request fields, explicit server startup
 options, model recipe presets, then [library defaults](../../docs/guides/c_api.md#keys).
@@ -24,9 +20,9 @@ Capability `defaults` and `defaults_by_mode` contain configured overrides, with
 in generation metadata. Output formats, queue limits and listen addresses keep
 server-local defaults.
 
-<a id="web-ui"></a>
+## Web UI
 
-## Start the server
+### Start the server
 
 From the repository root, start the launcher. It finds the server executable
 and uses the repository's `models/` directory:
@@ -38,7 +34,7 @@ and uses the repository's `models/` directory:
 ```
 
 You can also double-click `start-server.bat` in File Explorer to start the
-server. Keep the console window open while the server is running.
+server. Keep the console window open while using the Web UI.
 
 **Linux/macOS**
 
@@ -61,32 +57,69 @@ To start the executable directly instead, run from the build directory:
 ```
 
 The Windows path above is for a Visual Studio Release build. Adjust the path
-for another build configuration or an extracted release archive. After the
-server starts, <http://127.0.0.1:1234/> returns a plain-text status message;
-there is no built-in Web UI.
+for another build configuration or an extracted release archive. Open
+<http://127.0.0.1:1234/> after the server starts, and keep the server running
+while using the browser.
 
-## Load a model and generate
-
-This backend-only server has no model-selection or generation page. Use the
-[API](#api) instead:
+### Load a model
 
 1. Download the weights and required components listed in the matching
    [model guide](../../docs/models/README.md). Put them in the category folders
    under `models/`, such as `checkpoints/`, `diffusion_models/`, `text_encoders/`,
    `tokenizers/`, and `vae/`. See [Model directories](#model-directories) below.
-2. Load models at startup ([Models loaded at startup](#models-loaded-at-startup))
-   or through the native API under `/sdcpp/v1/...`, choosing a recipe and the
-   component files.
-3. Submit generation requests to the native async API, or to the OpenAI-compatible
-   (`/v1/...`) or Stable Diffusion WebUI-compatible (`/sdapi/v1/...`) endpoints.
-   See the [API reference](api.md) for request fields and examples.
+2. Click **Model** below the prompt to open model selection.
+3. Choose the matching **Recipe**. Keep **Apply recipe defaults** enabled to
+   start with that recipe's generation settings.
+4. Select each component in its named field: for example, **Diffusion model**,
+   the model-specific text encoder field, and **VAE**. Required fields have an
+   asterisk. A VAE/TAE requirement needs one compatible decoder. Match all files
+   to the chosen checkpoint and variant, as described in its model guide.
+5. If a file is missing from a dropdown, check its category folder and click
+   **Refresh files & recipes**. Selectors support searching by name or path.
+6. Click **Load models** and wait for loading to finish. Selecting a recipe or
+   file alone does not reload the model.
 
-LoRAs are selected through the request fields documented in the API reference.
-Place LoRA files under `models/loras/` or `models/Lora/`. Prompt tags such as
-`<lora:name:1>` are CLI syntax and are not parsed by the native server API.
+Recipe and component selectors support searching by name or relative file ID.
+Use the arrow keys and Enter to select, or Escape to cancel a search. With
+**Apply recipe defaults** enabled, selecting a recipe immediately applies its
+declared generation defaults while preserving prompts, input images and fields
+not specified by the recipe. Disable it to keep your current parameters when
+switching recipes. This preference defaults to enabled and is saved locally.
+Model loading and server-info refreshes do not reapply defaults or reset the form.
+Recipes declaring `video_frames` also switch the form to Video Generation;
+other recipes switch to Image Generation. Generation is enabled after the
+selected recipe is loaded.
 
-Later sections that mention the "UI" or "browser" describe an external frontend
-served with `--serve-html-path`; they do not apply to the built-in status page.
+The model button shows elapsed loading time and keeps the final time after
+success or failure, including after a page refresh.
+
+### Generate an image or video
+
+1. Enter a prompt, for example `a lovely cat` for an image model.
+2. Open **Sample & Guidance** to set **Method**, **Scheduler**, **Steps**, and
+   **CFG Scale** when the model guide specifies values different from the recipe
+   defaults. Set the output dimensions in **Aspect Ratio & Resolution**.
+3. Supply inputs for the chosen task. Editing recipes use **Reference Images**;
+   IP-Adapter uses **IP-Adapter Image**. For image-to-video, use video generation
+   and upload a **Start Frame**; add an **End Frame** only for a compatible
+   first/last-frame workflow. Set the video length and FPS as required by the model.
+4. Click **Generate**. Wait for denoising, decoding, and output encoding to
+   finish, then preview or save the result. Sampling reaching 100% does not mean
+   decoding has finished.
+
+The generation status bar shows the current stage and elapsed time even when
+Preview Mode is `none`. During sampling it shows completed steps for the current
+pass; prompt encoding and VAE decoding show an activity indicator when their
+total work is unknown. The canvas keeps the submitted output aspect ratio, and
+stage changes keep the same layout. Editing the next request's resolution does
+not resize the current preview or result.
+
+### LoRAs
+
+To apply a LoRA, open **LoRA**, select a compatible file, and set its
+**Strength**. Place files under `models/loras/` or `models/Lora/`. Browser
+requests use this selector; prompt tags such as `<lora:name:1>` are CLI syntax
+and are not parsed by the native server API.
 
 ## Model management
 
@@ -412,7 +445,7 @@ Run from the build directory for the complete list of server and generation opti
 
 ## API
 
-The server exposes these API families at the same host and port as the optional external Web UI:
+The server exposes these API families at the same host and port as the Web UI:
 
 | API | Path prefix |
 | --- | --- |
@@ -422,12 +455,40 @@ The server exposes these API families at the same host and port as the optional 
 
 See the [API reference](api.md) for endpoints, request fields, and examples.
 
-## Using an external frontend
+## Frontend development
 
-The root endpoint (`/`) responds with a plain-text status message. Use
-`--serve-html-path` to serve a custom `index.html` instead, for example a local
-copy of [sdcpp-webui](https://github.com/leejet/sdcpp-webui). Place it at the
-repository root and run from the build directory:
+### Build with frontend
+
+The server can build the frontend and embed it in the binary. Install
+[Node.js](https://nodejs.org/) 20 or newer and pnpm 10 or newer:
+
+```sh
+npm install -g pnpm
+node -v
+pnpm -v
+```
+
+Run the following commands from the repository root. They work in PowerShell
+and POSIX shells. Initialize the frontend submodule if it is missing, then
+configure and build with CMake:
+
+```sh
+git submodule update --init examples/server/frontend
+cmake -S . -B build -DSD_SERVER_BUILD_FRONTEND=ON
+cmake --build build --config Release
+```
+
+Add the backend options from the [build guide](../../docs/build.md) when
+configuring CMake. The build installs frontend dependencies, runs `pnpm run build`
+and `pnpm run build:header`, and embeds `gen_index_html.h` in `sd-server`.
+If pnpm is unavailable, CMake can use an existing generated header; without
+either, the server builds without the embedded Web UI.
+
+### Using an external frontend
+
+Use `--serve-html-path` to serve a custom `index.html` instead of the embedded
+frontend. For example, place it at the repository root and run from the build
+directory:
 
 **Windows (PowerShell)**
 
@@ -441,4 +502,11 @@ repository root and run from the build directory:
 ./bin/sd-server --model-dir ../models --serve-html-path ../index.html
 ```
 
-This lets you develop or test a frontend without rebuilding the server binary.
+This lets you develop or test the frontend without rebuilding the server binary.
+
+### Frontend repository
+
+The Web UI is maintained in the separate
+[sdcpp-webui repository](https://github.com/leejet/sdcpp-webui), included here as
+a Git submodule. Submit UI and frontend logic changes to that repository.
+Changes appear here when the submodule is updated.

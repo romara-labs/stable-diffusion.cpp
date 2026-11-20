@@ -326,7 +326,6 @@ static void add_context_specs(std::vector<ParamSpec>& specs) {
     ctx.number("linear_scale", &sd::ContextConfig::linear_scale, 0, std::numeric_limits<float>::max());
     ctx.string("llm_path", &sd::ContextConfig::llm_path);
     ctx.string("llm_vision_path", &sd::ContextConfig::llm_vision_path);
-    ctx.string("cliproj_path", &sd::ContextConfig::cliproj_path);
     ctx.choice("lora_apply_mode", &sd::ContextConfig::lora_apply_mode, str_to_lora_apply_mode, LORA_APPLY_MODE_COUNT);
     ctx.string("max_vram", &sd::ContextConfig::max_vram);
     ctx.string("model_args", &sd::ContextConfig::model_args);

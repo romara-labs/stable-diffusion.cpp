@@ -63,15 +63,11 @@ are detected from their weights.
 
 | Component | Weights and downloads | CLI option | Requirement |
 | --- | --- | --- | --- |
-| minimax_h3_fl2va/minimax_h3_ref2va | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/diffusion_models)<br>[GGUF](https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main)<br>[Pruned GGUF](https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF) (ComfyUI GGUF layout; see note below) | `--diffusion-model` | Required |
+| minimax_h3_fl2va/minimax_h3_ref2va | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/diffusion_models)<br>[GGUF](https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main) | `--diffusion-model` | Required |
 | qwen3vl_32b_minimax_h3 | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/text_encoders)<br>[GGUF](https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main) | `--llm` | Use matching text encoder |
 | P-H3-Image text encoder (Qwen3-VL-4B with the text connector) | [Safetensors](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/tree/main/text_encoders) | `--llm` | Use matching text encoder |
 | vae | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/vae) | `--vae` | Use matching VAE |
 | audio vae | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/vae) | `--audio-vae` | Required |
-
-The pruned GGUF uses the ComfyUI GGUF layout: awkward tensors are flat 256-block
-streams or flattened to 1-D with the true shape in `comfy.gguf.orig_shape.<name>`
-metadata; the loader reshapes them at load time.
 
 ## Usage
 
@@ -440,48 +436,6 @@ use these sampling options:
 Use `hyperflow-h3-flash-4` or `hyperflow-h3-flash-8` for 4 or 8 steps. These
 presets also work with `--hires-sigmas`; their length determines the step count.
 They already include video flow shift 12, so keep the default flow shift.
-
-## Replacing the text encoder with a small one (ClipProj)
-
-The 15.7 GB Qwen3-VL-32B text encoder can be replaced by a small Qwen3-VL
-(4B or 8B) plus a learned projection matrix into the 5120-dim conditioning
-space. This cuts the text-encoder memory footprint to that of the small model.
-
-```sh
-.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_fl2va-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_4b_bf16.safetensors --cliproj ..\models\cliproj\mmh3-4b-ClipProj-celeb-mlp.safetensors -p "A cute American Shorthair silver tabby kitten surfs on a tropical ocean wave..." --cfg-scale 1.0 -v -W 864 -H 480 --diffusion-fa --offload-to-cpu --rng cpu --fps 24 --video-frames 56
-```
-
-`--cliproj` accepts the projection matrices from
-[NicoLab28/ClipProj-MiniMax-H3](https://huggingface.co/NicoLab28/ClipProj-MiniMax-H3)
-(MIT), either as the original `.safetensors` or as a GGUF with the `clipproj`
-architecture (tensors keep their safetensors names and shapes; the layer index is
-read from the integer key `clipproj.tap`). Both formats give identical results. Use a `mmh3-4b-*` matrix with a Qwen3-VL-4B encoder (2560 dims) or a
-`mmh3-8b-*` matrix with a Qwen3-VL-8B (4096 dims); any other mismatch is
-detected and reported, and the projection is disabled. The layer index to read
-("tap") comes from the safetensors metadata, and d_in, d_out, the residual
-hidden width, and the presence of the ridge matrix `W` and of the measured
-sink vector are all detected from the tensor shapes, so the plain matrices,
-the `-mlp` ones with their fp16 residual network, the v3 matrices (ridge
-dropped, 32768-wide residual hidden), and the v3.1 matrices (sink vector
-dropped as well) work unchanged. The ridge matrix `W` and the residual network are
-each optional, but a file needs at least one of them. The matrix is calibrated on bf16 encoders and applies
-to any variant of the same size, quantised or not. The small encoder itself
-may be a llama.cpp GGUF (for example an Unsloth
-`Qwen3-VL-4B-Instruct-UD-Q8_K_XL.gguf`), with the Qwen3-VL vision tower
-supplied separately as an mmproj GGUF through `--llm_vision`.
-
-Limitations are inherited from the projection: reference images/videos
-(`--ref-image`, `--ref-video`) are outside the calibration distribution, and
-the small encoder does not know everything the 32B does. The projection is
-only used when both `--llm` and `--cliproj` are given and the diffusion model
-is a MiniMax-H3 variant; otherwise it is ignored with a warning.
-
-The same option works with MiniMax-H3 video, [MiniMax-H3-Image](minimax_h3_image.md)
-and [P-H3-Image](p_h3_image.md): all three share the 5120-dim conditioning space.
-When `--cliproj` is active it takes precedence over the P-H3-Image text connector
-(a warning is logged if a connector is also present), and the Qwen3-VL-4B/8B
-encoder is accepted without it. The published matrices were calibrated for video
-prompts; image quality with them has not been validated.
 
 ## Notes and limitations
 

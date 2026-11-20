@@ -1,13 +1,8 @@
-#include "model_catalog.h"
 #include "routes.h"
 
 #include <algorithm>
-#include <atomic>
-#include <cmath>
 #include <ctime>
-#include <mutex>
 #include <regex>
-#include <sstream>
 
 #include "common/common.h"
 #include "common/media_io.h"
@@ -25,41 +20,9 @@ static std::string extract_and_remove_sd_cpp_extra_args(std::string& text) {
     return extracted;
 }
 
-struct StreamingProgressState {
-    httplib::DataSink* sink = nullptr;
-    std::mutex mutex;
-    std::atomic<bool> active{false};
-};
-
-static void progress_callback_sse(int step, int steps, float time, void* data) {
-    auto* state = static_cast<StreamingProgressState*>(data);
-    if (state == nullptr || state->sink == nullptr || !state->active.load()) {
-        return;
-    }
-
-    const float percentage = steps > 0 ? (static_cast<float>(step) / static_cast<float>(steps)) * 100.0f : 0.0f;
-    const float eta        = steps > step ? (steps - step) * time : 0.0f;
-
-    json progress_data;
-    progress_data["step"]          = step;
-    progress_data["total_steps"]   = steps;
-    progress_data["percentage"]    = std::round(percentage * 100.0f) / 100.0f;
-    progress_data["time_per_step"] = time;
-    progress_data["eta"]           = eta;
-    progress_data["timestamp"]     = (unix_timestamp_now_ms() / 1000);
-
-    const std::string event = "data: " + progress_data.dump() + "\n\n";
-
-    std::lock_guard<std::mutex> lock(state->mutex);
-    if (state->sink != nullptr && state->active.load()) {
-        state->sink->write(event.c_str(), event.size());
-    }
-}
-
 static bool build_openai_generation_request(const httplib::Request& req,
                                             ServerRuntime& runtime,
                                             ImgGenJobRequest& request,
-                                            bool& is_stream,
                                             std::string& error_message) {
     if (req.body.empty()) {
         error_message = "empty body";
@@ -67,7 +30,6 @@ static bool build_openai_generation_request(const httplib::Request& req,
     }
 
     json j                    = json::parse(req.body);
-    is_stream                 = j.value("stream", false);
     std::string prompt        = j.value("prompt", "");
     int n                     = std::max(1, j.value("n", 1));
     std::string size          = j.value("size", "");
@@ -279,84 +241,6 @@ static bool execute_sync_img_gen_request(ServerRuntime& runtime,
     return true;
 }
 
-static bool execute_streaming_img_gen_request(ServerRuntime& runtime,
-                                              ImgGenJobRequest request,
-                                              httplib::DataSink& sink,
-                                              std::string& error_message) {
-    StreamingProgressState progress_state;
-    progress_state.sink   = &sink;
-    progress_state.active = true;
-
-    SDImageVec results;
-    SDOptPtr img_gen_params = request.to_image_opt();
-
-    try {
-        sink.write("data: {\"status\":\"starting\"}\n\n", 29);
-
-        {
-            std::lock_guard<std::mutex> lock(*runtime.sd_ctx_mutex);
-            PromptImageCallbackGuard prompt_images(runtime.sd_ctx, request.gen_params);
-            sd_set_progress_callback(progress_callback_sse, &progress_state);
-            sd_result_t* generated = nullptr;
-            generate_sd_image(runtime.sd_ctx, img_gen_params, &generated);
-            sd_set_progress_callback(nullptr, nullptr);
-            results.adopt(generated, runtime.ctx_params->lora_model_dir);
-        }
-
-        progress_state.active = false;
-
-        if (results.empty()) {
-            error_message = "generate_image returned no results";
-            return false;
-        }
-
-        EncodedImageFormat encoded_format = EncodedImageFormat::PNG;
-        if (request.output_format == "jpeg") {
-            encoded_format = EncodedImageFormat::JPEG;
-        } else if (request.output_format == "webp") {
-            encoded_format = EncodedImageFormat::WEBP;
-        }
-
-        json out;
-        out["created"]       = (unix_timestamp_now_ms() / 1000);
-        out["data"]          = json::array();
-        out["output_format"] = request.output_format;
-
-        int result_count = results.count();
-        for (int i = 0; i < result_count; ++i) {
-            if (results[i].data == nullptr) {
-                continue;
-            }
-            std::string params = request.gen_params.embed_image_metadata
-                                     ? results.generation_info(i)
-                                     : "";
-            auto image_bytes   = encode_image_to_vector(encoded_format,
-                                                        results[i].data,
-                                                        results[i].width,
-                                                        results[i].height,
-                                                        results[i].channel,
-                                                        params,
-                                                        request.output_compression);
-            if (image_bytes.empty()) {
-                continue;
-            }
-
-            out["data"].push_back({{"b64_json", base64_encode(image_bytes)}});
-        }
-
-        const std::string final_event = "data: " + out.dump() + "\n\n";
-        sink.write(final_event.c_str(), final_event.size());
-        sink.write("data: [DONE]\n\n", 14);
-        return true;
-    } catch (const std::exception& e) {
-        progress_state.active = false;
-        std::lock_guard<std::mutex> lock(*runtime.sd_ctx_mutex);
-        sd_set_progress_callback(nullptr, nullptr);
-        error_message = e.what();
-        return false;
-    }
-}
-
 void register_openai_api_endpoints(httplib::Server& svr, ServerRuntime& rt) {
     ServerRuntime* runtime = &rt;
     RuntimeRoutes routes(svr, rt);
@@ -379,48 +263,14 @@ void register_openai_api_endpoints(httplib::Server& svr, ServerRuntime& rt) {
             }
 
             ImgGenJobRequest request;
-            bool is_stream = false;
             std::string error_message;
-            if (!build_openai_generation_request(req, *runtime, request, is_stream, error_message)) {
+            if (!build_openai_generation_request(req, *runtime, request, error_message)) {
                 res.status = 400;
                 res.set_content(json({{"error", error_message}}).dump(), "application/json");
                 return;
             }
 
             LOG_DEBUG("%s\n", request.gen_params.to_string().c_str());
-
-            if (is_stream) {
-                res.set_header("Cache-Control", "no-cache");
-                res.set_header("Connection", "close");
-                const auto model_revision = model_status(*runtime).value("revision", uint64_t(0));
-                res.set_chunked_content_provider(
-                    "text/event-stream",
-                    [runtime, request, model_revision](size_t offset, httplib::DataSink& sink) mutable -> bool {
-                        if (offset > 0) {
-                            return false;
-                        }
-
-                        // Content providers run after the route's model lock has been released.
-                        std::shared_lock<std::shared_mutex> model_lock(runtime->models->runtime_mutex, std::try_to_lock);
-                        if (!model_lock.owns_lock() || !runtime->sd_ctx || model_status(*runtime).value("revision", uint64_t(0)) != model_revision) {
-                            const std::string event = "data: " + json({{"error", "Model changed before streaming started"}}).dump() + "\n\n";
-                            sink.write(event.c_str(), event.size());
-                            sink.done();
-                            return true;
-                        }
-
-                        std::string stream_error;
-                        if (!execute_streaming_img_gen_request(*runtime, request, sink, stream_error)) {
-                            const std::string error_event = "data: " + json({{"error", stream_error}}).dump() + "\n\n";
-                            sink.write(error_event.c_str(), error_event.size());
-                        }
-                        // Without done() the chunked body never gets its terminating chunk and
-                        // clients such as curl report the stream as truncated.
-                        sink.done();
-                        return true;
-                    });
-                return;
-            }
 
             SDImageVec results;
             if (!execute_sync_img_gen_request(*runtime, request, results, error_message)) {

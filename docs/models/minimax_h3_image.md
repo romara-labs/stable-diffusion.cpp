@@ -39,14 +39,6 @@ VAE are incompatible. No audio VAE is needed.
 | P-H3-Image text encoder (Qwen3-VL-4B with the text connector) | [Safetensors](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/tree/main/text_encoders) | `--llm` | Use matching text encoder |
 | vae | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3-Image/tree/main/vae) | `--vae` | Use matching VAE |
 
-### ClipProj alternative
-
-`--cliproj` also works here: a small Qwen3-VL (4B or 8B) plus a ClipProj matrix
-replaces the 32B text encoder. See
-[Replacing the text encoder with a small one](minimax_h3.md#replacing-the-text-encoder-with-a-small-one-clipproj).
-The published matrices were calibrated for video prompts, so image quality is
-not validated.
-
 ## Usage
 
 CLI examples use the [shared path and shell conventions](README.md#example-conventions).
@@ -185,24 +177,6 @@ by the model. Prompts are passed through without an automatic editing prefix.
 Reference images keep their aspect ratio. The text encoder sees a 1024-pixel
 short edge, while VAE inputs use a short edge between 1024 and 2048 pixels.
 Small references are enlarged and dimensions are rounded to multiples of 32.
-
-### Editing with ClipProj and small quantizations
-
-With a `Q2_K` diffusion model (with the 4B ClipProj matrices and a Qwen3-VL-4B `IQ2_XXS`
-encoder) the default reference mode (`pass_to_dit=true`) returned a near copy of the
-reference whatever the instruction, so `Edit <Picture 1>. ...` had no visible effect.
-With the same encoder, ClipProj matrix, prompt and seed, a `UD-Q4_K_XL` diffusion model
-followed the instruction (a red scarf appeared) and preserved the face, the sign and the
-background. Use `Q4_K_XL` or larger for editing. Text-to-image already works with `Q2_K`.
-
-If only a `Q2_K` file fits, `--ref-image-args "pass_to_dit=false"` sends the reference to
-the text encoder only: the instruction is followed, but the scene is regenerated from the
-encoder's view of the picture rather than edited pixel by pixel, so faces and fine details
-are not preserved.
-
-The ClipProj path is not the cause: the copy behaviour also appears with text-only
-conditioning plus a reference passed to the DiT, and with both the ridge and the `-mlp`
-matrices. The 32B encoder was not available to compare.
 
 ## Notes and limitations
 

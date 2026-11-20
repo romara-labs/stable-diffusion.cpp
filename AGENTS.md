@@ -26,7 +26,8 @@ Agents must not:
 
 * Run `git push`, create PRs, or submit issue/PR comments on the user's behalf.
 * Create commits unless the user explicitly requests that specific commit.
-* Modify `ggml/` or `thirdparty/` unless explicitly requested and necessary.
+* Modify `ggml/`, `thirdparty/`, or `examples/server/frontend/` unless
+  explicitly requested and necessary.
 * Read large local model files or tokenizer vocabulary files.
 * Rewrite unrelated code for style-only reasons.
 * Add secrets, model weights, generated binaries, local absolute paths, or
@@ -82,10 +83,10 @@ documentation.
   and debugging.
 * `examples/common/` - shared example support code.
 * `examples/server/` - server application built on top of the library.
-  This fork is backend-only: the webui submodule and its pnpm build were
-  removed. Do not reintroduce frontend build steps when syncing with upstream.
   Before modifying built-in recipes, read and follow
   [the built-in recipe policy](examples/server/recipes/README.md).
+* `examples/server/frontend/` - git submodule containing independent frontend
+  code. Avoid modifying it unless explicitly requested.
 
 ### Documentation and Tooling
 

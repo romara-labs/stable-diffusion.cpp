@@ -1,0 +1,7 @@
+baa9cb9431fe7c2489375a220ac1e4673150fbfe89ae34d64d1b96a7b77cab2f  0001-backend-only-server.patch
+4268cb87e38cfb26f413adcef5de30014ee00f886b6e6bd6f1d586c2a2e884d5  0002-server-sse-streaming.patch
+b0a1f105782bad2de99576bf6caf59ab26c29f11dadf31712d2919362188d87d  0003-server-png-response-overhead.patch
+c9730da6c23048e7bbc49896ff01951ec3e57d1570b6e629a9c34fc708a06e8c  0004-krea2-vulkan-param-transform-and-loader.patch
+bf069c3ff172aaafb0d1e1a6347e1d1ee43ce0a49044db78e71790c6648f4efc  0005-audio-vae-compute-context-release.patch
+55af9aab6c71b0a59854b9fe017805992b5bfc6e5bf60b07ae471c6c9859624b  0006-comfyui-gguf-layout-and-int-metadata.patch
+288c8efd396abbf4a4e29d785d1a0e72b6ed969c9ce64e784526b00b245e3854  0007-cliproj-minimax-h3-video-and-image.patch

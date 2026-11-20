@@ -120,7 +120,6 @@ namespace sd {
         const char* t5xxl_path{};
         const char* llm_path{};
         const char* llm_vision_path{};
-        const char* cliproj_path{};
         const char* diffusion_model_path{};
         const char* high_noise_diffusion_model_path{};
         const char* uncond_diffusion_model_path{};

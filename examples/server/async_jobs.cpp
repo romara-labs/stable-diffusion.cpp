@@ -12,25 +12,6 @@
 #include "common/media_io.h"
 #include "common/resource_owners.hpp"
 
-class SDProgressCallbackScope {
-private:
-    bool enabled_ = false;
-
-public:
-    SDProgressCallbackScope(sd_progress_cb_t callback, void* data)
-        : enabled_(callback != nullptr) {
-        if (enabled_) {
-            sd_set_progress_callback(callback, data);
-        }
-    }
-
-    ~SDProgressCallbackScope() {
-        if (enabled_) {
-            sd_set_progress_callback(nullptr, nullptr);
-        }
-    }
-};
-
 class JobCancellationMonitor {
     std::mutex mutex_;
     std::condition_variable cv_;
@@ -443,9 +424,7 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
                          int& output_frame_count,
                          int& output_fps,
                          json& output_info,
-                         std::string& error_message,
-                         sd_progress_cb_t progress_callback,
-                         void* progress_callback_data) {
+                         std::string& error_message) {
     SDOptPtr params = job.vid_gen.to_video_opt();
     std::string str_params;
 
@@ -459,7 +438,6 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
             return false;
         }
         JobCancellationMonitor cancellation(runtime.sd_ctx, job);
-        SDProgressCallbackScope progress_scope(progress_callback, progress_callback_data);
         JobCallbacksGuard callbacks(runtime.sd_ctx, job);
         PromptImageCallbackGuard prompt_images(runtime.sd_ctx, job.vid_gen.gen_params);
         sd_result_t* generated = nullptr;

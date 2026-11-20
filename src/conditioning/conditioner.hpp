@@ -14,7 +14,6 @@
 
 #include "core/tensor_ggml.hpp"
 #include "core/util.h"
-#include "model/adapter/cliproj.hpp"
 #include "model/diffusion/model.hpp"
 #include "model/te/clip.hpp"
 #include "model/te/llada_image_te.hpp"
@@ -1982,7 +1981,6 @@ struct LLMEmbedder : public Conditioner {
     std::shared_ptr<Tokenizer> tokenizer;
     std::shared_ptr<LLM::LLMRunner> llm;
     std::shared_ptr<T5Runner> byt5;
-    std::shared_ptr<ClipProj::ClipProjRunner> cliproj;
     std::shared_ptr<PH3ImageTextConnectorRunner> ph3_connector;
 
     bool supports_prompt_images() const override {
@@ -1995,9 +1993,8 @@ struct LLMEmbedder : public Conditioner {
                 const std::string prefix                            = "",
                 bool enable_vision                                  = false,
                 std::shared_ptr<RunnerWeightManager> weight_manager = nullptr,
-                const TokenizerConfig& tokenizers                   = {},
-                std::shared_ptr<ClipProj::ClipProjRunner> cliproj_  = nullptr)
-        : version(version), cliproj(std::move(cliproj_)) {
+                const TokenizerConfig& tokenizers                   = {})
+        : version(version) {
         if (!tokenizers.has(TokenizerConfig::MAIN)) {
             if (sd_version_is_lens(version)) {
                 throw std::runtime_error("Lens requires an external GPT-OSS tokenizer.json; pass --tokenizer FILE or set the tokenizer context option");
@@ -2049,22 +2046,9 @@ struct LLMEmbedder : public Conditioner {
                                                "text_encoders.llm",
                                                enable_vision,
                                                weight_manager);
-        if (cliproj && cliproj->get_d_in() != llm->config.hidden_size) {
-            LOG_ERROR("ClipProj mismatch: projection expects d_in=%lld but the text encoder outputs %lld; disabling",
-                      static_cast<long long>(cliproj->get_d_in()),
-                      static_cast<long long>(llm->config.hidden_size));
-            cliproj->set_enabled(false);
-        }
         if (sd_version_is_minimax_h3(version)) {
             const bool has_ph3_connector = tensor_storage_map.count(std::string(PH3ImageTextConnectorRunner::prefix) + ".proj.weight") != 0;
-            if (cliproj && cliproj->is_enabled()) {
-                // ClipProj maps one tap of a small Qwen3-VL into the 5120-dim H3 space for the
-                // video, image and P-H3-Image variants alike, so the P-H3 connector (which reads
-                // five taps) and the encoder-size guards below do not apply.
-                if (has_ph3_connector) {
-                    LOG_WARN("ClipProj takes precedence over the P-H3-Image text connector; ignoring the connector");
-                }
-            } else if (has_ph3_connector) {
+            if (has_ph3_connector) {
                 if (llm->config.num_layers != 36 || llm->config.hidden_size != 2560) {
                     throw std::runtime_error("The P-H3-Image text connector requires the Qwen3-VL-4B text encoder");
                 }
@@ -2115,9 +2099,6 @@ struct LLMEmbedder : public Conditioner {
 
     void get_param_tensors(std::map<std::string, ggml_tensor*>& tensors) override {
         llm->get_param_tensors(tensors, "text_encoders.llm");
-        if (cliproj) {
-            cliproj->get_param_tensors(tensors, "cliproj");
-        }
         if (ph3_connector) {
             ph3_connector->get_param_tensors(tensors);
         }
@@ -2128,16 +2109,10 @@ struct LLMEmbedder : public Conditioner {
 
     void get_param_tensor_ops(std::map<ggml_tensor*, enum ggml_op>& tensor_ops) override {
         llm->get_param_tensor_ops(tensor_ops);
-        if (cliproj) {
-            cliproj->get_param_tensor_ops(tensor_ops);
-        }
     }
 
     void set_max_graph_vram_bytes(size_t max_vram_bytes) override {
         llm->set_max_graph_vram_bytes(max_vram_bytes);
-        if (cliproj) {
-            cliproj->set_max_graph_vram_bytes(max_vram_bytes);
-        }
         if (ph3_connector) {
             ph3_connector->set_max_graph_vram_bytes(max_vram_bytes);
         }
@@ -2148,9 +2123,6 @@ struct LLMEmbedder : public Conditioner {
 
     void set_runtime_backends(const std::vector<ggml_backend_t>& backends) override {
         llm->set_runtime_backends(backends);
-        if (cliproj) {
-            cliproj->set_runtime_backends(backends);
-        }
         if (ph3_connector) {
             ph3_connector->set_runtime_backends(backends);
         }
@@ -2163,9 +2135,6 @@ struct LLMEmbedder : public Conditioner {
         if (llm) {
             llm->set_graph_cut_layer_split_enabled(enabled);
         }
-        if (cliproj) {
-            cliproj->set_graph_cut_layer_split_enabled(enabled);
-        }
         if (byt5) {
             byt5->set_graph_cut_layer_split_enabled(enabled);
         }
@@ -2175,9 +2144,6 @@ struct LLMEmbedder : public Conditioner {
         if (llm) {
             llm->set_graph_cut_layer_split_backend_vram_limits(limits);
         }
-        if (cliproj) {
-            cliproj->set_graph_cut_layer_split_backend_vram_limits(limits);
-        }
         if (byt5) {
             byt5->set_graph_cut_layer_split_backend_vram_limits(limits);
         }
@@ -2185,9 +2151,6 @@ struct LLMEmbedder : public Conditioner {
 
     void get_layer_split_param_tensors(std::map<std::string, ggml_tensor*>& tensors) override {
         llm->get_param_tensors(tensors, "text_encoders.llm");
-        if (cliproj) {
-            cliproj->get_param_tensors(tensors, "cliproj");
-        }
         if (byt5) {
             byt5->get_param_tensors(tensors, "text_encoders.t5xxl.transformer");
         }
@@ -2195,9 +2158,6 @@ struct LLMEmbedder : public Conditioner {
 
     void set_flash_attention_enabled(bool enabled) override {
         llm->set_flash_attention_enabled(enabled);
-        if (cliproj) {
-            cliproj->set_flash_attention_enabled(enabled);
-        }
         if (ph3_connector) {
             ph3_connector->set_flash_attention_enabled(enabled);
         }
@@ -2208,9 +2168,6 @@ struct LLMEmbedder : public Conditioner {
 
     void set_scale_overrides(float linear_scale, float attn_scale) override {
         llm->set_scale_overrides(linear_scale, attn_scale);
-        if (cliproj) {
-            cliproj->set_scale_overrides(linear_scale, attn_scale);
-        }
         if (ph3_connector) {
             ph3_connector->set_scale_overrides(linear_scale, attn_scale);
         }
@@ -2226,9 +2183,6 @@ struct LLMEmbedder : public Conditioner {
         if (llm) {
             llm->set_weight_adapter(adapter);
         }
-        if (cliproj) {
-            cliproj->set_weight_adapter(adapter);
-        }
         if (byt5) {
             byt5->set_weight_adapter(adapter);
         }
@@ -2240,9 +2194,6 @@ struct LLMEmbedder : public Conditioner {
         }
         if (llm) {
             llm->runner_end();
-        }
-        if (cliproj) {
-            cliproj->runner_end();
         }
         if (byt5) {
             byt5->runner_end();
@@ -2654,11 +2605,7 @@ struct LLMEmbedder : public Conditioner {
         if (sd_version_is_minimax_h3(version)) {
             prompt_template_encode_start_idx = 0;
             // The final tap is normalized; LLMRunner exposes it at num_layers + 1.
-            if (cliproj && cliproj->is_enabled()) {
-                out_layers = {cliproj->get_tap()};
-            } else {
-                out_layers = ph3_connector ? std::set<int>{13, 19, 25, 31, 37} : std::set<int>{50};
-            }
+            out_layers        = ph3_connector ? std::set<int>{13, 19, 25, 31, 37} : std::set<int>{50};
             prompt_attn_range = {0, 0};
 
             if (llm->enable_vision) {
@@ -2778,12 +2725,6 @@ struct LLMEmbedder : public Conditioner {
                 }
             }
             prompt += text;
-            if (prompt.empty()) {
-                // MiniMax-H3 uses the raw Qwen prompt instead of a chat template.
-                // CFG commonly supplies an empty negative prompt, which must still
-                // produce one token for the LLM attention graph.
-                prompt = "<|endoftext|>";
-            }
         } else if (sd_version_is_hunyuan_video(version)) {
             prompt_template_encode_start_idx = 98;
             out_layers                       = {26};
@@ -3448,13 +3389,6 @@ struct LLMEmbedder : public Conditioner {
                                            &prompt_tokens);
         if (hidden_states.empty()) {
             return {};
-        }
-        if (cliproj && cliproj->is_enabled()) {
-            hidden_states = cliproj->compute(n_threads, hidden_states, true);
-            if (hidden_states.empty()) {
-                LOG_ERROR("ClipProj compute failed");
-                return {};
-            }
         }
         std::vector<sd::Tensor<float>> extra_hidden_states_vec;
         if (sd_version_is_hunyuan_video(version) && byt5) {

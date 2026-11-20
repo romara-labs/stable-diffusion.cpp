@@ -1,0 +1,684 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+index 7c40713..3ecf11c 100644
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -26,8 +26,6 @@ on:
+         "**/*.cu",
+         "**/*.cuh",
+         "ggml",
+-        "examples/server/frontend",
+-        "examples/server/frontend/**",
+         "examples/server/recipes/*.json",
+         "start-server.sh",
+         "start-server.bat",
+@@ -49,8 +47,6 @@ on:
+         "**/*.cu",
+         "**/*.cuh",
+         "ggml",
+-        "examples/server/frontend",
+-        "examples/server/frontend/**",
+         "examples/server/recipes/*.json",
+         "start-server.sh",
+         "start-server.bat",
+@@ -77,16 +73,6 @@ jobs:
+         with:
+           submodules: recursive
+ 
+-      - name: Setup Node
+-        uses: actions/setup-node@v5
+-        with:
+-          node-version: 24
+-
+-      - name: Setup pnpm
+-        uses: pnpm/action-setup@v5
+-        with:
+-          version: 10.15.1
+-
+       - name: Dependencies
+         id: depends
+         run: |
+@@ -142,16 +128,6 @@ jobs:
+         with:
+           submodules: recursive
+ 
+-      - name: Setup Node
+-        uses: actions/setup-node@v5
+-        with:
+-          node-version: 24
+-
+-      - name: Setup pnpm
+-        uses: pnpm/action-setup@v5
+-        with:
+-          version: 10.15.1
+-
+       - name: Dependencies
+         id: depends
+         run: |
+@@ -238,16 +214,6 @@ jobs:
+         with:
+           submodules: recursive
+ 
+-      - name: Setup Node
+-        uses: actions/setup-node@v5
+-        with:
+-          node-version: 24
+-
+-      - name: Setup pnpm
+-        uses: pnpm/action-setup@v5
+-        with:
+-          version: 10.15.1
+-
+       - name: Get commit hash
+         id: commit
+         if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
+@@ -322,16 +288,6 @@ jobs:
+         with:
+           submodules: recursive
+ 
+-      - name: Setup Node
+-        uses: actions/setup-node@v5
+-        with:
+-          node-version: 24
+-
+-      - name: Setup pnpm
+-        uses: pnpm/action-setup@v5
+-        with:
+-          version: 10.15.1
+-
+       - name: Dependencies
+         id: depends
+         run: |
+@@ -399,16 +355,6 @@ jobs:
+         with:
+           submodules: recursive
+ 
+-      - name: Setup Node
+-        uses: actions/setup-node@v5
+-        with:
+-          node-version: 24
+-
+-      - name: Setup pnpm
+-        uses: pnpm/action-setup@v5
+-        with:
+-          version: 10.15.1
+-
+       - name: Install cuda-toolkit
+         id: cuda-toolkit
+         if: ${{ matrix.build == 'cuda12' }}
+@@ -516,16 +462,6 @@ jobs:
+         with:
+           submodules: recursive
+ 
+-      - name: Setup Node
+-        uses: actions/setup-node@v5
+-        with:
+-          node-version: 24
+-
+-      - name: Setup pnpm
+-        uses: pnpm/action-setup@v5
+-        with:
+-          version: 10.15.1
+-
+       - name: Cache ROCm Installation
+         id: cache-rocm
+         uses: actions/cache@v5
+@@ -734,18 +670,6 @@ jobs:
+           # Keep venv activated for subsequent steps
+           echo "$(pwd)/.venv/bin" >> $GITHUB_PATH
+ 
+-      # setup-node installs into /opt/hostedtoolcache, which is removed above.
+-      # Keep Node/pnpm setup after disk cleanup so the server frontend can be embedded.
+-      - name: Setup Node
+-        uses: actions/setup-node@v5
+-        with:
+-          node-version: 24
+-
+-      - name: Setup pnpm
+-        uses: pnpm/action-setup@v5
+-        with:
+-          version: 10.15.1
+-
+       - name: Build
+         id: cmake_build
+         run: |
+diff --git a/.gitmodules b/.gitmodules
+index 9e1837e..d0e5cc0 100644
+--- a/.gitmodules
++++ b/.gitmodules
+@@ -1,9 +1,6 @@
+ [submodule "ggml"]
+     path = ggml
+ 	url = https://github.com/leejet/ggml.git
+-[submodule "examples/server/frontend"]
+-	path = examples/server/frontend
+-	url = https://github.com/leejet/sdcpp-webui.git
+ [submodule "thirdparty/libwebp"]
+ 	path = thirdparty/libwebp
+ 	url = https://github.com/webmproject/libwebp.git
+diff --git a/AGENTS.md b/AGENTS.md
+index ea93c92..ce12e62 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -26,8 +26,7 @@ Agents must not:
+ 
+ * Run `git push`, create PRs, or submit issue/PR comments on the user's behalf.
+ * Create commits unless the user explicitly requests that specific commit.
+-* Modify `ggml/`, `thirdparty/`, or `examples/server/frontend/` unless
+-  explicitly requested and necessary.
++* Modify `ggml/` or `thirdparty/` unless explicitly requested and necessary.
+ * Read large local model files or tokenizer vocabulary files.
+ * Rewrite unrelated code for style-only reasons.
+ * Add secrets, model weights, generated binaries, local absolute paths, or
+@@ -83,10 +82,10 @@ documentation.
+   and debugging.
+ * `examples/common/` - shared example support code.
+ * `examples/server/` - server application built on top of the library.
++  This fork is backend-only: the webui submodule and its pnpm build were
++  removed. Do not reintroduce frontend build steps when syncing with upstream.
+   Before modifying built-in recipes, read and follow
+   [the built-in recipe policy](examples/server/recipes/README.md).
+-* `examples/server/frontend/` - git submodule containing independent frontend
+-  code. Avoid modifying it unless explicitly requested.
+ 
+ ### Documentation and Tooling
+ 
+diff --git a/README.md b/README.md
+index 6d62d57..015db8e 100644
+--- a/README.md
++++ b/README.md
+@@ -105,6 +105,7 @@ API and command-line option may change frequently.***
+ - Supported backends
+   - CPU (AVX, AVX2 and AVX512 support for x86 architectures)
+   - CUDA
++  - ROCm (HipBLAS)
+   - Vulkan
+   - Metal
+   - OpenCL
+diff --git a/docker/Dockerfile b/docker/Dockerfile
+index 3073509..bf23626 100644
+--- a/docker/Dockerfile
++++ b/docker/Dockerfile
+@@ -2,16 +2,7 @@ ARG UBUNTU_VERSION=24.04
+ 
+ FROM ubuntu:$UBUNTU_VERSION AS build
+ 
+-# sd-server embeds the web UI at build time, so the build image needs Node/pnpm.
+-RUN apt-get update && apt-get install -y --no-install-recommends build-essential git cmake ca-certificates curl gnupg && \
+-    mkdir -p /etc/apt/keyrings && \
+-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-repo.gpg.key && \
+-    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key && \
+-    rm /tmp/nodesource-repo.gpg.key && \
+-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+-    apt-get update && \
+-    apt-get install -y --no-install-recommends nodejs && \
+-    npm install -g pnpm@10.15.1 && \
++RUN apt-get update && apt-get install -y --no-install-recommends build-essential git cmake ca-certificates && \
+     apt-get clean && \
+     rm -rf /var/lib/apt/lists/*
+ 
+diff --git a/docker/Dockerfile.cuda b/docker/Dockerfile.cuda
+index e3364e8..d82c28b 100644
+--- a/docker/Dockerfile.cuda
++++ b/docker/Dockerfile.cuda
+@@ -5,16 +5,7 @@ ARG UBUNTU_VERSION=24.04
+ 
+ FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS build
+ 
+-# sd-server embeds the web UI at build time, so the build image needs Node/pnpm.
+-RUN apt-get update && apt-get install -y --no-install-recommends build-essential git ccache cmake ca-certificates curl gnupg && \
+-    mkdir -p /etc/apt/keyrings && \
+-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-repo.gpg.key && \
+-    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key && \
+-    rm /tmp/nodesource-repo.gpg.key && \
+-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+-    apt-get update && \
+-    apt-get install -y --no-install-recommends nodejs && \
+-    npm install -g pnpm@10.15.1 && \
++RUN apt-get update && apt-get install -y --no-install-recommends build-essential git ccache cmake ca-certificates && \
+     apt-get clean && \
+     rm -rf /var/lib/apt/lists/*
+ 
+diff --git a/docker/Dockerfile.musa b/docker/Dockerfile.musa
+index 9042452..41ce7f6 100644
+--- a/docker/Dockerfile.musa
++++ b/docker/Dockerfile.musa
+@@ -2,16 +2,7 @@ ARG MUSA_IMAGE=registry.mthreads.com/mcconline/inference/pytorch:2.9.1.post1-py3
+ 
+ FROM ${MUSA_IMAGE} AS build
+ 
+-# sd-server embeds the web UI at build time, so the build image needs Node/pnpm.
+-RUN apt-get update && apt-get install -y --no-install-recommends ccache cmake git ca-certificates curl gnupg && \
+-    mkdir -p /etc/apt/keyrings && \
+-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-repo.gpg.key && \
+-    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key && \
+-    rm /tmp/nodesource-repo.gpg.key && \
+-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+-    apt-get update && \
+-    apt-get install -y --no-install-recommends nodejs && \
+-    npm install -g pnpm@10.15.1 && \
++RUN apt-get update && apt-get install -y --no-install-recommends ccache cmake git ca-certificates && \
+     apt-get clean && \
+     rm -rf /var/lib/apt/lists/*
+ 
+diff --git a/docker/Dockerfile.rocm b/docker/Dockerfile.rocm
+index 9236bdb..0ffc79c 100644
+--- a/docker/Dockerfile.rocm
++++ b/docker/Dockerfile.rocm
+@@ -1,15 +1,7 @@
+ FROM rocm/dev-ubuntu-24.04 AS build
+ 
+-# sd-server embeds the web UI at build time, so the build image needs Node/pnpm.
+ RUN apt-get update && apt-get install -y --no-install-recommends \
+-        build-essential git cmake ninja-build ccache ca-certificates curl gnupg && \
+-    mkdir -p /etc/apt/keyrings && \
+-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-repo.gpg.key && \
+-    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key && \
+-    rm /tmp/nodesource-repo.gpg.key && \
+-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+-    apt-get update && apt-get install -y --no-install-recommends nodejs && \
+-    npm install -g pnpm@10.15.1 && \
++        build-essential git cmake ninja-build ccache ca-certificates && \
+     apt-get clean && rm -rf /var/lib/apt/lists/*
+ 
+ WORKDIR /sd.cpp
+diff --git a/docker/Dockerfile.sycl b/docker/Dockerfile.sycl
+index bdbb750..aef1b6e 100644
+--- a/docker/Dockerfile.sycl
++++ b/docker/Dockerfile.sycl
+@@ -3,16 +3,7 @@ ARG SYCL_VERSION=2025.3.2-0
+ 
+ FROM intel/oneapi-basekit:${SYCL_VERSION}-devel-ubuntu24.04 AS build
+ 
+-# sd-server embeds the web UI at build time, so the build image needs Node/pnpm.
+-RUN apt-get update && apt-get install -y --no-install-recommends cmake ca-certificates curl gnupg && \
+-    mkdir -p /etc/apt/keyrings && \
+-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-repo.gpg.key && \
+-    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key && \
+-    rm /tmp/nodesource-repo.gpg.key && \
+-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+-    apt-get update && \
+-    apt-get install -y --no-install-recommends nodejs && \
+-    npm install -g pnpm@10.15.1 && \
++RUN apt-get update && apt-get install -y --no-install-recommends cmake ca-certificates && \
+     apt-get clean && \
+     rm -rf /var/lib/apt/lists/*
+ 
+diff --git a/docker/Dockerfile.vulkan b/docker/Dockerfile.vulkan
+index 576e5d9..599f355 100644
+--- a/docker/Dockerfile.vulkan
++++ b/docker/Dockerfile.vulkan
+@@ -2,16 +2,7 @@ ARG UBUNTU_VERSION=24.04
+ 
+ FROM ubuntu:$UBUNTU_VERSION AS build
+ 
+-# sd-server embeds the web UI at build time, so the build image needs Node/pnpm.
+-RUN apt-get update && apt-get install -y --no-install-recommends build-essential git cmake libvulkan-dev glslc spirv-headers ca-certificates curl gnupg && \
+-    mkdir -p /etc/apt/keyrings && \
+-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-repo.gpg.key && \
+-    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key && \
+-    rm /tmp/nodesource-repo.gpg.key && \
+-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+-    apt-get update && \
+-    apt-get install -y --no-install-recommends nodejs && \
+-    npm install -g pnpm@10.15.1 && \
++RUN apt-get update && apt-get install -y --no-install-recommends build-essential git cmake libvulkan-dev glslc spirv-headers ca-certificates && \
+     apt-get clean && \
+     rm -rf /var/lib/apt/lists/*
+ 
+diff --git a/examples/cli/main.cpp b/examples/cli/main.cpp
+index a29fd70..fbc797a 100644
+--- a/examples/cli/main.cpp
++++ b/examples/cli/main.cpp
+@@ -5,10 +5,7 @@
+ #include <cctype>
+ #include <climits>
+ #include <filesystem>
+-#include <functional>
+ #include <iostream>
+-#include <map>
+-#include <random>
+ #include <regex>
+ #include <sstream>
+ #include <string>
+diff --git a/examples/server/CMakeLists.txt b/examples/server/CMakeLists.txt
+index d01f7a7..42a2bcd 100644
+--- a/examples/server/CMakeLists.txt
++++ b/examples/server/CMakeLists.txt
+@@ -1,67 +1,5 @@
+ set(TARGET sd-server)
+ 
+-option(SD_SERVER_BUILD_FRONTEND "Build server frontend with pnpm" ON)
+-
+-set(FRONTEND_DIR "${CMAKE_CURRENT_SOURCE_DIR}/frontend")
+-set(GENERATED_HTML_HEADER "${FRONTEND_DIR}/dist/gen_index_html.h")
+-
+-set(HAVE_FRONTEND_BUILD OFF)
+-
+-if(SD_SERVER_BUILD_FRONTEND AND EXISTS "${FRONTEND_DIR}")
+-    if(WIN32)
+-        find_program(PNPM_EXECUTABLE NAMES pnpm.cmd pnpm)
+-    else()
+-        find_program(PNPM_EXECUTABLE NAMES pnpm)
+-    endif()
+-
+-    if(PNPM_EXECUTABLE)
+-        message(STATUS "Frontend dir found: ${FRONTEND_DIR}")
+-        message(STATUS "pnpm found: ${PNPM_EXECUTABLE}")
+-
+-        set(HAVE_FRONTEND_BUILD ON)
+-
+-        add_custom_target(${TARGET}_frontend_install
+-            COMMAND "${PNPM_EXECUTABLE}" --ignore-workspace -C "${FRONTEND_DIR}" install
+-            WORKING_DIRECTORY "${FRONTEND_DIR}"
+-            COMMENT "Installing frontend dependencies"
+-            VERBATIM
+-        )
+-
+-        add_custom_target(${TARGET}_frontend_build
+-            COMMAND "${PNPM_EXECUTABLE}" --ignore-workspace -C "${FRONTEND_DIR}" run build
+-            WORKING_DIRECTORY "${FRONTEND_DIR}"
+-            COMMENT "Building frontend"
+-            VERBATIM
+-        )
+-
+-        add_custom_target(${TARGET}_frontend_header
+-            COMMAND "${PNPM_EXECUTABLE}" --ignore-workspace -C "${FRONTEND_DIR}" run build:header
+-            WORKING_DIRECTORY "${FRONTEND_DIR}"
+-            COMMENT "Generating gen_index_html.h"
+-            VERBATIM
+-        )
+-
+-        add_dependencies(${TARGET}_frontend_build ${TARGET}_frontend_install)
+-        add_dependencies(${TARGET}_frontend_header ${TARGET}_frontend_build)
+-
+-        add_custom_target(${TARGET}_frontend
+-            DEPENDS ${TARGET}_frontend_header
+-        )
+-
+-        set_source_files_properties("${GENERATED_HTML_HEADER}" PROPERTIES GENERATED TRUE)
+-    else()
+-        if(EXISTS "${GENERATED_HTML_HEADER}")
+-            message(STATUS "pnpm not found; using pre-built frontend header detected at ${GENERATED_HTML_HEADER}")
+-            set(HAVE_FRONTEND_BUILD ON)
+-            add_custom_target(${TARGET}_frontend)
+-        else()
+-            message(WARNING "pnpm not found; frontend build disabled.")
+-        endif()
+-    endif()
+-else()
+-    message(STATUS "Frontend disabled or directory not found: ${FRONTEND_DIR}")
+-endif()
+-
+ add_executable(${TARGET}
+     ../common/common.cpp
+     ../common/generation_metadata.cpp
+@@ -82,16 +20,6 @@ if(APPLE)
+     sd_set_macos_rpaths(${TARGET})
+ endif()
+ 
+-if(HAVE_FRONTEND_BUILD)
+-    add_dependencies(${TARGET} ${TARGET}_frontend)
+-    target_sources(${TARGET} PRIVATE "${GENERATED_HTML_HEADER}")
+-    target_include_directories(${TARGET} PRIVATE "${FRONTEND_DIR}/dist")
+-    target_compile_definitions(${TARGET} PRIVATE HAVE_INDEX_HTML)
+-    message(STATUS "HAVE_INDEX_HTML enabled")
+-else()
+-    message(STATUS "HAVE_INDEX_HTML disabled")
+-endif()
+-
+ file(GLOB BUILTIN_RECIPE_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/recipes/*.json")
+ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BUILTIN_RECIPE_FILES})
+ # Keep recipes in separate literals to stay within MSVC's string size limit.
+diff --git a/examples/server/README.md b/examples/server/README.md
+index 8673eb8..82a8d53 100644
+--- a/examples/server/README.md
++++ b/examples/server/README.md
+@@ -1,14 +1,18 @@
+ # stable-diffusion.cpp Server
+ 
+-`sd-server` provides a Web UI for image and video generation, model management,
+-and HTTP APIs. Download or build the server before starting; see the
+-[build guide](../../docs/build.md) and [frontend build instructions](#build-with-frontend).
+-
+-- [Web UI](#web-ui): start the server, load a model, and generate.
++`sd-server` provides HTTP APIs for image and video generation and model
++management. This fork ships a **backend-only server**: no web frontend is
++embedded, and building it does not require Node.js or pnpm. Download or build
++the server before starting; see the [build guide](../../docs/build.md). To use
++a web page with it, serve an external one with `--serve-html-path` (see
++[Using an external frontend](#using-an-external-frontend)).
++
++- [Start the server](#start-the-server): launchers and direct execution.
++- [Load a model and generate](#load-a-model-and-generate): the API-driven workflow.
+ - [Model management](#model-management): model directories, recipes, and startup models.
+ - [Server configuration](#server-configuration): launcher settings, network, logging, and help.
+ - [API](#api): native and compatibility endpoints.
+-- [Frontend development](#frontend-development): build or customize the Web UI.
++- [Using an external frontend](#using-an-external-frontend): serve a custom Web UI.
+ 
+ Inference settings follow this priority: request fields, explicit server startup
+ options, model recipe presets, then [library defaults](../../docs/guides/c_api.md#keys).
+@@ -20,9 +24,9 @@ Capability `defaults` and `defaults_by_mode` contain configured overrides, with
+ in generation metadata. Output formats, queue limits and listen addresses keep
+ server-local defaults.
+ 
+-## Web UI
++<a id="web-ui"></a>
+ 
+-### Start the server
++## Start the server
+ 
+ From the repository root, start the launcher. It finds the server executable
+ and uses the repository's `models/` directory:
+@@ -34,7 +38,7 @@ and uses the repository's `models/` directory:
+ ```
+ 
+ You can also double-click `start-server.bat` in File Explorer to start the
+-server. Keep the console window open while using the Web UI.
++server. Keep the console window open while the server is running.
+ 
+ **Linux/macOS**
+ 
+@@ -57,69 +61,32 @@ To start the executable directly instead, run from the build directory:
+ ```
+ 
+ The Windows path above is for a Visual Studio Release build. Adjust the path
+-for another build configuration or an extracted release archive. Open
+-<http://127.0.0.1:1234/> after the server starts, and keep the server running
+-while using the browser.
++for another build configuration or an extracted release archive. After the
++server starts, <http://127.0.0.1:1234/> returns a plain-text status message;
++there is no built-in Web UI.
++
++## Load a model and generate
+ 
+-### Load a model
++This backend-only server has no model-selection or generation page. Use the
++[API](#api) instead:
+ 
+ 1. Download the weights and required components listed in the matching
+    [model guide](../../docs/models/README.md). Put them in the category folders
+    under `models/`, such as `checkpoints/`, `diffusion_models/`, `text_encoders/`,
+    `tokenizers/`, and `vae/`. See [Model directories](#model-directories) below.
+-2. Click **Model** below the prompt to open model selection.
+-3. Choose the matching **Recipe**. Keep **Apply recipe defaults** enabled to
+-   start with that recipe's generation settings.
+-4. Select each component in its named field: for example, **Diffusion model**,
+-   the model-specific text encoder field, and **VAE**. Required fields have an
+-   asterisk. A VAE/TAE requirement needs one compatible decoder. Match all files
+-   to the chosen checkpoint and variant, as described in its model guide.
+-5. If a file is missing from a dropdown, check its category folder and click
+-   **Refresh files & recipes**. Selectors support searching by name or path.
+-6. Click **Load models** and wait for loading to finish. Selecting a recipe or
+-   file alone does not reload the model.
+-
+-Recipe and component selectors support searching by name or relative file ID.
+-Use the arrow keys and Enter to select, or Escape to cancel a search. With
+-**Apply recipe defaults** enabled, selecting a recipe immediately applies its
+-declared generation defaults while preserving prompts, input images and fields
+-not specified by the recipe. Disable it to keep your current parameters when
+-switching recipes. This preference defaults to enabled and is saved locally.
+-Model loading and server-info refreshes do not reapply defaults or reset the form.
+-Recipes declaring `video_frames` also switch the form to Video Generation;
+-other recipes switch to Image Generation. Generation is enabled after the
+-selected recipe is loaded.
+-
+-The model button shows elapsed loading time and keeps the final time after
+-success or failure, including after a page refresh.
+-
+-### Generate an image or video
+-
+-1. Enter a prompt, for example `a lovely cat` for an image model.
+-2. Open **Sample & Guidance** to set **Method**, **Scheduler**, **Steps**, and
+-   **CFG Scale** when the model guide specifies values different from the recipe
+-   defaults. Set the output dimensions in **Aspect Ratio & Resolution**.
+-3. Supply inputs for the chosen task. Editing recipes use **Reference Images**;
+-   IP-Adapter uses **IP-Adapter Image**. For image-to-video, use video generation
+-   and upload a **Start Frame**; add an **End Frame** only for a compatible
+-   first/last-frame workflow. Set the video length and FPS as required by the model.
+-4. Click **Generate**. Wait for denoising, decoding, and output encoding to
+-   finish, then preview or save the result. Sampling reaching 100% does not mean
+-   decoding has finished.
+-
+-The generation status bar shows the current stage and elapsed time even when
+-Preview Mode is `none`. During sampling it shows completed steps for the current
+-pass; prompt encoding and VAE decoding show an activity indicator when their
+-total work is unknown. The canvas keeps the submitted output aspect ratio, and
+-stage changes keep the same layout. Editing the next request's resolution does
+-not resize the current preview or result.
+-
+-### LoRAs
+-
+-To apply a LoRA, open **LoRA**, select a compatible file, and set its
+-**Strength**. Place files under `models/loras/` or `models/Lora/`. Browser
+-requests use this selector; prompt tags such as `<lora:name:1>` are CLI syntax
+-and are not parsed by the native server API.
++2. Load models at startup ([Models loaded at startup](#models-loaded-at-startup))
++   or through the native API under `/sdcpp/v1/...`, choosing a recipe and the
++   component files.
++3. Submit generation requests to the native async API, or to the OpenAI-compatible
++   (`/v1/...`) or Stable Diffusion WebUI-compatible (`/sdapi/v1/...`) endpoints.
++   See the [API reference](api.md) for request fields and examples.
++
++LoRAs are selected through the request fields documented in the API reference.
++Place LoRA files under `models/loras/` or `models/Lora/`. Prompt tags such as
++`<lora:name:1>` are CLI syntax and are not parsed by the native server API.
++
++Later sections that mention the "UI" or "browser" describe an external frontend
++served with `--serve-html-path`; they do not apply to the built-in status page.
+ 
+ ## Model management
+ 
+@@ -445,7 +412,7 @@ Run from the build directory for the complete list of server and generation opti
+ 
+ ## API
+ 
+-The server exposes these API families at the same host and port as the Web UI:
++The server exposes these API families at the same host and port as the optional external Web UI:
+ 
+ | API | Path prefix |
+ | --- | --- |
+@@ -455,40 +422,12 @@ The server exposes these API families at the same host and port as the Web UI:
+ 
+ See the [API reference](api.md) for endpoints, request fields, and examples.
+ 
+-## Frontend development
+-
+-### Build with frontend
+-
+-The server can build the frontend and embed it in the binary. Install
+-[Node.js](https://nodejs.org/) 20 or newer and pnpm 10 or newer:
+-
+-```sh
+-npm install -g pnpm
+-node -v
+-pnpm -v
+-```
++## Using an external frontend
+ 
+-Run the following commands from the repository root. They work in PowerShell
+-and POSIX shells. Initialize the frontend submodule if it is missing, then
+-configure and build with CMake:
+-
+-```sh
+-git submodule update --init examples/server/frontend
+-cmake -S . -B build -DSD_SERVER_BUILD_FRONTEND=ON
+-cmake --build build --config Release
+-```
+-
+-Add the backend options from the [build guide](../../docs/build.md) when
+-configuring CMake. The build installs frontend dependencies, runs `pnpm run build`
+-and `pnpm run build:header`, and embeds `gen_index_html.h` in `sd-server`.
+-If pnpm is unavailable, CMake can use an existing generated header; without
+-either, the server builds without the embedded Web UI.
+-
+-### Using an external frontend
+-
+-Use `--serve-html-path` to serve a custom `index.html` instead of the embedded
+-frontend. For example, place it at the repository root and run from the build
+-directory:
++The root endpoint (`/`) responds with a plain-text status message. Use
++`--serve-html-path` to serve a custom `index.html` instead, for example a local
++copy of [sdcpp-webui](https://github.com/leejet/sdcpp-webui). Place it at the
++repository root and run from the build directory:
+ 
+ **Windows (PowerShell)**
+ 
+@@ -502,11 +441,4 @@ directory:
+ ./bin/sd-server --model-dir ../models --serve-html-path ../index.html
+ ```
+ 
+-This lets you develop or test the frontend without rebuilding the server binary.
+-
+-### Frontend repository
+-
+-The Web UI is maintained in the separate
+-[sdcpp-webui repository](https://github.com/leejet/sdcpp-webui), included here as
+-a Git submodule. Submit UI and frontend logic changes to that repository.
+-Changes appear here when the submodule is updated.
++This lets you develop or test a frontend without rebuilding the server binary.
+diff --git a/examples/server/frontend b/examples/server/frontend
+deleted file mode 160000
+index b07665f..0000000
+--- a/examples/server/frontend
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit b07665f893047e7b633bbdb69d97c3a9c594076e
+diff --git a/examples/server/routes.h b/examples/server/routes.h
+index f779391..c725272 100644
+--- a/examples/server/routes.h
++++ b/examples/server/routes.h
+@@ -5,7 +5,7 @@
+ #include "httplib.h"
+ #include "runtime.h"
+ 
+-void register_index_endpoints(httplib::Server& svr, const SDSvrParams& svr_params, const std::string& index_html);
++void register_index_endpoints(httplib::Server& svr, const SDSvrParams& svr_params);
+ void register_openai_api_endpoints(httplib::Server& svr, ServerRuntime& rt);
+ void register_sdapi_endpoints(httplib::Server& svr, ServerRuntime& rt);
+ void register_sdcpp_api_endpoints(httplib::Server& svr, ServerRuntime& rt);
+diff --git a/examples/server/routes_index.cpp b/examples/server/routes_index.cpp
+index 14ad814..2df5ae4 100644
+--- a/examples/server/routes_index.cpp
++++ b/examples/server/routes_index.cpp
+@@ -4,9 +4,9 @@
+ #include <fstream>
+ #include <iterator>
+ 
+-void register_index_endpoints(httplib::Server& svr, const SDSvrParams& svr_params, const std::string& index_html) {
++void register_index_endpoints(httplib::Server& svr, const SDSvrParams& svr_params) {
+     const std::string serve_html_path = svr_params.serve_html_path;
+-    svr.Get("/", [serve_html_path, index_html](const httplib::Request&, httplib::Response& res) {
++    svr.Get("/", [serve_html_path](const httplib::Request&, httplib::Response& res) {
+         if (!serve_html_path.empty()) {
+             std::ifstream file(std::filesystem::u8path(serve_html_path));
+             if (file) {
+@@ -17,7 +17,7 @@ void register_index_endpoints(httplib::Server& svr, const SDSvrParams& svr_param
+                 res.set_content("Error: Unable to read HTML file", "text/plain");
+             }
+         } else {
+-            res.set_content(index_html, "text/html");
++            res.set_content("Stable Diffusion Server is running", "text/plain");
+         }
+     });
+ }

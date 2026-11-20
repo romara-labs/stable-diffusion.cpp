@@ -9,11 +9,14 @@
 
 #include "async_jobs.h"
 #include "common/common.h"
-#include "common/media_io.h"
 #include "common/resource_owners.hpp"
 #include "model_catalog.h"
 #include "routes.h"
 #include "runtime.h"
+
+#ifdef HAVE_INDEX_HTML
+#include "frontend/dist/gen_index_html.h"
+#endif
 
 static void print_usage(const char* argv0, const std::vector<ArgOptions>& options_list) {
     std::cout << version_string() << "\n";
@@ -74,8 +77,6 @@ int main(int argc, const char** argv) {
     // Preserve the CLI default while disabling cwd scans for sd-server.
     ctx_params.lora_model_dir.clear();
     SDGenerationParams default_gen_params;
-
-    set_png_compression_level(svr_params.png_compression_level);
 
     sd_set_log_callback(sd_log_cb, (void*)&svr_params);
     parse_args(argc, argv, svr_params, ctx_params, default_gen_params);
@@ -152,7 +153,13 @@ int main(int argc, const char** argv) {
         return httplib::Server::HandlerResponse::Unhandled;
     });
 
-    register_index_endpoints(svr, svr_params);
+    std::string index_html;
+#ifdef HAVE_INDEX_HTML
+    index_html.assign(reinterpret_cast<const char*>(index_html_bytes), index_html_size);
+#else
+    index_html = "Stable Diffusion Server is running";
+#endif
+    register_index_endpoints(svr, svr_params, index_html);
     register_openai_api_endpoints(svr, runtime);
     register_sdapi_endpoints(svr, runtime);
     register_sdcpp_api_endpoints(svr, runtime);

@@ -1,0 +1,890 @@
+diff --git a/docs/models/minimax_h3.md b/docs/models/minimax_h3.md
+index 862b04d..c1b321b 100644
+--- a/docs/models/minimax_h3.md
++++ b/docs/models/minimax_h3.md
+@@ -63,12 +63,16 @@ are detected from their weights.
+ 
+ | Component | Weights and downloads | CLI option | Requirement |
+ | --- | --- | --- | --- |
+-| minimax_h3_fl2va/minimax_h3_ref2va | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/diffusion_models)<br>[GGUF](https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main) | `--diffusion-model` | Required |
++| minimax_h3_fl2va/minimax_h3_ref2va | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/diffusion_models)<br>[GGUF](https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main)<br>[Pruned GGUF](https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF) (ComfyUI GGUF layout; see note below) | `--diffusion-model` | Required |
+ | qwen3vl_32b_minimax_h3 | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/text_encoders)<br>[GGUF](https://huggingface.co/leejet/MiniMax-H3-GGUF/tree/main) | `--llm` | Use matching text encoder |
+ | P-H3-Image text encoder (Qwen3-VL-4B with the text connector) | [Safetensors](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/tree/main/text_encoders) | `--llm` | Use matching text encoder |
+ | vae | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/vae) | `--vae` | Use matching VAE |
+ | audio vae | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/vae) | `--audio-vae` | Required |
+ 
++The pruned GGUF uses the ComfyUI GGUF layout: awkward tensors are flat 256-block
++streams or flattened to 1-D with the true shape in `comfy.gguf.orig_shape.<name>`
++metadata; the loader reshapes them at load time.
++
+ ## Usage
+ 
+ CLI examples use the [shared path and shell conventions](README.md#example-conventions).
+@@ -437,6 +441,48 @@ Use `hyperflow-h3-flash-4` or `hyperflow-h3-flash-8` for 4 or 8 steps. These
+ presets also work with `--hires-sigmas`; their length determines the step count.
+ They already include video flow shift 12, so keep the default flow shift.
+ 
++## Replacing the text encoder with a small one (ClipProj)
++
++The 15.7 GB Qwen3-VL-32B text encoder can be replaced by a small Qwen3-VL
++(4B or 8B) plus a learned projection matrix into the 5120-dim conditioning
++space. This cuts the text-encoder memory footprint to that of the small model.
++
++```sh
++.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model  ..\models\diffusion_models\minimax_h3_fl2va-Q4_K_M.gguf --vae ..\models\vae\minimax_h3_video_vae_fp16.safetensors --audio-vae ..\models\vae\minimax_h3_audio_vae_fp32.safetensors --llm ..\models\text_encoders\qwen3vl_4b_bf16.safetensors --cliproj ..\models\cliproj\mmh3-4b-ClipProj-celeb-mlp.safetensors -p "A cute American Shorthair silver tabby kitten surfs on a tropical ocean wave..." --cfg-scale 1.0 -v -W 864 -H 480 --diffusion-fa --offload-to-cpu --rng cpu --fps 24 --video-frames 56
++```
++
++`--cliproj` accepts the projection matrices from
++[NicoLab28/ClipProj-MiniMax-H3](https://huggingface.co/NicoLab28/ClipProj-MiniMax-H3)
++(MIT), either as the original `.safetensors` or as a GGUF with the `clipproj`
++architecture (tensors keep their safetensors names and shapes; the layer index is
++read from the integer key `clipproj.tap`). Both formats give identical results. Use a `mmh3-4b-*` matrix with a Qwen3-VL-4B encoder (2560 dims) or a
++`mmh3-8b-*` matrix with a Qwen3-VL-8B (4096 dims); any other mismatch is
++detected and reported, and the projection is disabled. The layer index to read
++("tap") comes from the safetensors metadata, and d_in, d_out, the residual
++hidden width, and the presence of the ridge matrix `W` and of the measured
++sink vector are all detected from the tensor shapes, so the plain matrices,
++the `-mlp` ones with their fp16 residual network, the v3 matrices (ridge
++dropped, 32768-wide residual hidden), and the v3.1 matrices (sink vector
++dropped as well) work unchanged. The ridge matrix `W` and the residual network are
++each optional, but a file needs at least one of them. The matrix is calibrated on bf16 encoders and applies
++to any variant of the same size, quantised or not. The small encoder itself
++may be a llama.cpp GGUF (for example an Unsloth
++`Qwen3-VL-4B-Instruct-UD-Q8_K_XL.gguf`), with the Qwen3-VL vision tower
++supplied separately as an mmproj GGUF through `--llm_vision`.
++
++Limitations are inherited from the projection: reference images/videos
++(`--ref-image`, `--ref-video`) are outside the calibration distribution, and
++the small encoder does not know everything the 32B does. The projection is
++only used when both `--llm` and `--cliproj` are given and the diffusion model
++is a MiniMax-H3 variant; otherwise it is ignored with a warning.
++
++The same option works with MiniMax-H3 video, [MiniMax-H3-Image](minimax_h3_image.md)
++and [P-H3-Image](p_h3_image.md): all three share the 5120-dim conditioning space.
++When `--cliproj` is active it takes precedence over the P-H3-Image text connector
++(a warning is logged if a connector is also present), and the Qwen3-VL-4B/8B
++encoder is accepted without it. The published matrices were calibrated for video
++prompts; image quality with them has not been validated.
++
+ ## Notes and limitations
+ 
+ - Width and height are aligned upward to a multiple of 32.
+diff --git a/docs/models/minimax_h3_image.md b/docs/models/minimax_h3_image.md
+index 6a06236..26375a9 100644
+--- a/docs/models/minimax_h3_image.md
++++ b/docs/models/minimax_h3_image.md
+@@ -39,6 +39,14 @@ VAE are incompatible. No audio VAE is needed.
+ | P-H3-Image text encoder (Qwen3-VL-4B with the text connector) | [Safetensors](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/tree/main/text_encoders) | `--llm` | Use matching text encoder |
+ | vae | [Safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3-Image/tree/main/vae) | `--vae` | Use matching VAE |
+ 
++### ClipProj alternative
++
++`--cliproj` also works here: a small Qwen3-VL (4B or 8B) plus a ClipProj matrix
++replaces the 32B text encoder. See
++[Replacing the text encoder with a small one](minimax_h3.md#replacing-the-text-encoder-with-a-small-one-clipproj).
++The published matrices were calibrated for video prompts, so image quality is
++not validated.
++
+ ## Usage
+ 
+ CLI examples use the [shared path and shell conventions](README.md#example-conventions).
+@@ -178,6 +186,24 @@ Reference images keep their aspect ratio. The text encoder sees a 1024-pixel
+ short edge, while VAE inputs use a short edge between 1024 and 2048 pixels.
+ Small references are enlarged and dimensions are rounded to multiples of 32.
+ 
++### Editing with ClipProj and small quantizations
++
++With a `Q2_K` diffusion model (with the 4B ClipProj matrices and a Qwen3-VL-4B `IQ2_XXS`
++encoder) the default reference mode (`pass_to_dit=true`) returned a near copy of the
++reference whatever the instruction, so `Edit <Picture 1>. ...` had no visible effect.
++With the same encoder, ClipProj matrix, prompt and seed, a `UD-Q4_K_XL` diffusion model
++followed the instruction (a red scarf appeared) and preserved the face, the sign and the
++background. Use `Q4_K_XL` or larger for editing. Text-to-image already works with `Q2_K`.
++
++If only a `Q2_K` file fits, `--ref-image-args "pass_to_dit=false"` sends the reference to
++the text encoder only: the instruction is followed, but the scene is regenerated from the
++encoder's view of the picture rather than edited pixel by pixel, so faces and fine details
++are not preserved.
++
++The ClipProj path is not the cause: the copy behaviour also appears with text-only
++conditioning plus a reference passed to the DiT, and with both the ridge and the `-mlp`
++matrices. The 32B encoder was not available to compare.
++
+ ## Notes and limitations
+ 
+ - Width and height are aligned upward to a multiple of 32.
+diff --git a/docs/models/p_h3_image.md b/docs/models/p_h3_image.md
+index eed5784..0fb59ff 100644
+--- a/docs/models/p_h3_image.md
++++ b/docs/models/p_h3_image.md
+@@ -33,6 +33,15 @@ separately, pass it with `--llm_vision`.
+ 
+ Use the P-H3 image VAE; the MiniMax-H3 video VAE is not compatible. No audio VAE is needed.
+ 
++### ClipProj alternative
++
++Instead of the text connector, a small Qwen3-VL (4B or 8B) can be paired with a
++ClipProj matrix through `--cliproj`; see
++[Replacing the text encoder with a small one](minimax_h3.md#replacing-the-text-encoder-with-a-small-one-clipproj).
++ClipProj takes precedence over the connector when both are supplied. The
++published matrices were calibrated for MiniMax-H3 video prompts, so image
++quality is not validated.
++
+ ## Usage
+ 
+ CLI examples use the [shared path and shell conventions](README.md#example-conventions).
+diff --git a/examples/common/common.cpp b/examples/common/common.cpp
+index 0c155c1..57c6dd2 100644
+--- a/examples/common/common.cpp
++++ b/examples/common/common.cpp
+@@ -419,6 +419,11 @@ ArgOptions SDContextParams::get_options() {
+          "path to the llm vit",
+          0,
+          &llm_vision_path},
++        {"",
++         "--cliproj",
++         "path to a MiniMax-H3 ClipProj projection matrix (.safetensors or clipproj .gguf)",
++         0,
++         &cliproj_path},
+         {"",
+          "--qwen2vl",
+          "alias of --llm. Deprecated.",
+@@ -928,6 +933,7 @@ std::string SDContextParams::to_string() const {
+         << "  t5xxl_path: \"" << t5xxl_path << "\",\n"
+         << "  llm_path: \"" << llm_path << "\",\n"
+         << "  llm_vision_path: \"" << llm_vision_path << "\",\n"
++        << "  cliproj_path: \"" << cliproj_path << "\",\n"
+         << "  tokenizer: \"" << tokenizer << "\",\n"
+         << "  diffusion_model_path: \"" << diffusion_model_path << "\",\n"
+         << "  high_noise_diffusion_model_path: \"" << high_noise_diffusion_model_path << "\",\n"
+@@ -998,6 +1004,7 @@ SDOptPtr SDContextParams::to_context_opt() {
+     opt.set_string("t5xxl_path", t5xxl_path);
+     opt.set_string("llm_path", llm_path);
+     opt.set_string("llm_vision_path", llm_vision_path);
++    opt.set_string("cliproj_path", cliproj_path);
+     opt.set_string("tokenizer", tokenizer);
+     opt.set_string("diffusion_model_path", diffusion_model_path);
+     opt.set_string("high_noise_diffusion_model_path", high_noise_diffusion_model_path);
+diff --git a/examples/common/common.h b/examples/common/common.h
+index eb4a043..a77dcc2 100644
+--- a/examples/common/common.h
++++ b/examples/common/common.h
+@@ -133,6 +133,7 @@ struct SDContextParams {
+     std::string t5xxl_path;
+     std::string llm_path;
+     std::string llm_vision_path;
++    std::string cliproj_path;
+     std::string tokenizer;
+     std::string diffusion_model_path;
+     std::string high_noise_diffusion_model_path;
+diff --git a/examples/server/model_catalog.cpp b/examples/server/model_catalog.cpp
+index 5a538fd..b200d1f 100644
+--- a/examples/server/model_catalog.cpp
++++ b/examples/server/model_catalog.cpp
+@@ -32,6 +32,7 @@ static const ModelSlot k_model_slots[] = {
+     {"clip_vision", "CLIP Vision", {"clip_vision"}, &SDContextParams::clip_vision_path},
+     {"t5xxl", "T5", {"text_encoders"}, &SDContextParams::t5xxl_path},
+     {"llm", "LLM Text Encoder", {"text_encoders"}, &SDContextParams::llm_path},
++    {"cliproj", "ClipProj", {"text_encoders"}, &SDContextParams::cliproj_path},
+     {"llm_vision", "LLM Vision Encoder", {"text_encoders", "clip_vision"}, &SDContextParams::llm_vision_path},
+     {"tokenizer", "Tokenizer", {"tokenizers"}, &SDContextParams::tokenizer},
+     {"vae", "VAE", {"vae"}, &SDContextParams::vae_path},
+diff --git a/src/api/options.cpp b/src/api/options.cpp
+index 591cce3..1fd8cd9 100644
+--- a/src/api/options.cpp
++++ b/src/api/options.cpp
+@@ -326,6 +326,7 @@ static void add_context_specs(std::vector<ParamSpec>& specs) {
+     ctx.number("linear_scale", &sd::ContextConfig::linear_scale, 0, std::numeric_limits<float>::max());
+     ctx.string("llm_path", &sd::ContextConfig::llm_path);
+     ctx.string("llm_vision_path", &sd::ContextConfig::llm_vision_path);
++    ctx.string("cliproj_path", &sd::ContextConfig::cliproj_path);
+     ctx.choice("lora_apply_mode", &sd::ContextConfig::lora_apply_mode, str_to_lora_apply_mode, LORA_APPLY_MODE_COUNT);
+     ctx.string("max_vram", &sd::ContextConfig::max_vram);
+     ctx.string("model_args", &sd::ContextConfig::model_args);
+diff --git a/src/conditioning/conditioner.hpp b/src/conditioning/conditioner.hpp
+index 808375c..3a31ad6 100644
+--- a/src/conditioning/conditioner.hpp
++++ b/src/conditioning/conditioner.hpp
+@@ -14,6 +14,7 @@
+ 
+ #include "core/tensor_ggml.hpp"
+ #include "core/util.h"
++#include "model/adapter/cliproj.hpp"
+ #include "model/diffusion/model.hpp"
+ #include "model/te/clip.hpp"
+ #include "model/te/llada_image_te.hpp"
+@@ -1981,6 +1982,7 @@ struct LLMEmbedder : public Conditioner {
+     std::shared_ptr<Tokenizer> tokenizer;
+     std::shared_ptr<LLM::LLMRunner> llm;
+     std::shared_ptr<T5Runner> byt5;
++    std::shared_ptr<ClipProj::ClipProjRunner> cliproj;
+     std::shared_ptr<PH3ImageTextConnectorRunner> ph3_connector;
+ 
+     bool supports_prompt_images() const override {
+@@ -1993,8 +1995,9 @@ struct LLMEmbedder : public Conditioner {
+                 const std::string prefix                            = "",
+                 bool enable_vision                                  = false,
+                 std::shared_ptr<RunnerWeightManager> weight_manager = nullptr,
+-                const TokenizerConfig& tokenizers                   = {})
+-        : version(version) {
++                const TokenizerConfig& tokenizers                   = {},
++                std::shared_ptr<ClipProj::ClipProjRunner> cliproj_  = nullptr)
++        : version(version), cliproj(std::move(cliproj_)) {
+         if (!tokenizers.has(TokenizerConfig::MAIN)) {
+             if (sd_version_is_lens(version)) {
+                 throw std::runtime_error("Lens requires an external GPT-OSS tokenizer.json; pass --tokenizer FILE or set the tokenizer context option");
+@@ -2046,9 +2049,22 @@ struct LLMEmbedder : public Conditioner {
+                                                "text_encoders.llm",
+                                                enable_vision,
+                                                weight_manager);
++        if (cliproj && cliproj->get_d_in() != llm->config.hidden_size) {
++            LOG_ERROR("ClipProj mismatch: projection expects d_in=%lld but the text encoder outputs %lld; disabling",
++                      static_cast<long long>(cliproj->get_d_in()),
++                      static_cast<long long>(llm->config.hidden_size));
++            cliproj->set_enabled(false);
++        }
+         if (sd_version_is_minimax_h3(version)) {
+             const bool has_ph3_connector = tensor_storage_map.count(std::string(PH3ImageTextConnectorRunner::prefix) + ".proj.weight") != 0;
+-            if (has_ph3_connector) {
++            if (cliproj && cliproj->is_enabled()) {
++                // ClipProj maps one tap of a small Qwen3-VL into the 5120-dim H3 space for the
++                // video, image and P-H3-Image variants alike, so the P-H3 connector (which reads
++                // five taps) and the encoder-size guards below do not apply.
++                if (has_ph3_connector) {
++                    LOG_WARN("ClipProj takes precedence over the P-H3-Image text connector; ignoring the connector");
++                }
++            } else if (has_ph3_connector) {
+                 if (llm->config.num_layers != 36 || llm->config.hidden_size != 2560) {
+                     throw std::runtime_error("The P-H3-Image text connector requires the Qwen3-VL-4B text encoder");
+                 }
+@@ -2099,6 +2115,9 @@ struct LLMEmbedder : public Conditioner {
+ 
+     void get_param_tensors(std::map<std::string, ggml_tensor*>& tensors) override {
+         llm->get_param_tensors(tensors, "text_encoders.llm");
++        if (cliproj) {
++            cliproj->get_param_tensors(tensors, "cliproj");
++        }
+         if (ph3_connector) {
+             ph3_connector->get_param_tensors(tensors);
+         }
+@@ -2109,10 +2128,16 @@ struct LLMEmbedder : public Conditioner {
+ 
+     void get_param_tensor_ops(std::map<ggml_tensor*, enum ggml_op>& tensor_ops) override {
+         llm->get_param_tensor_ops(tensor_ops);
++        if (cliproj) {
++            cliproj->get_param_tensor_ops(tensor_ops);
++        }
+     }
+ 
+     void set_max_graph_vram_bytes(size_t max_vram_bytes) override {
+         llm->set_max_graph_vram_bytes(max_vram_bytes);
++        if (cliproj) {
++            cliproj->set_max_graph_vram_bytes(max_vram_bytes);
++        }
+         if (ph3_connector) {
+             ph3_connector->set_max_graph_vram_bytes(max_vram_bytes);
+         }
+@@ -2123,6 +2148,9 @@ struct LLMEmbedder : public Conditioner {
+ 
+     void set_runtime_backends(const std::vector<ggml_backend_t>& backends) override {
+         llm->set_runtime_backends(backends);
++        if (cliproj) {
++            cliproj->set_runtime_backends(backends);
++        }
+         if (ph3_connector) {
+             ph3_connector->set_runtime_backends(backends);
+         }
+@@ -2135,6 +2163,9 @@ struct LLMEmbedder : public Conditioner {
+         if (llm) {
+             llm->set_graph_cut_layer_split_enabled(enabled);
+         }
++        if (cliproj) {
++            cliproj->set_graph_cut_layer_split_enabled(enabled);
++        }
+         if (byt5) {
+             byt5->set_graph_cut_layer_split_enabled(enabled);
+         }
+@@ -2144,6 +2175,9 @@ struct LLMEmbedder : public Conditioner {
+         if (llm) {
+             llm->set_graph_cut_layer_split_backend_vram_limits(limits);
+         }
++        if (cliproj) {
++            cliproj->set_graph_cut_layer_split_backend_vram_limits(limits);
++        }
+         if (byt5) {
+             byt5->set_graph_cut_layer_split_backend_vram_limits(limits);
+         }
+@@ -2151,6 +2185,9 @@ struct LLMEmbedder : public Conditioner {
+ 
+     void get_layer_split_param_tensors(std::map<std::string, ggml_tensor*>& tensors) override {
+         llm->get_param_tensors(tensors, "text_encoders.llm");
++        if (cliproj) {
++            cliproj->get_param_tensors(tensors, "cliproj");
++        }
+         if (byt5) {
+             byt5->get_param_tensors(tensors, "text_encoders.t5xxl.transformer");
+         }
+@@ -2158,6 +2195,9 @@ struct LLMEmbedder : public Conditioner {
+ 
+     void set_flash_attention_enabled(bool enabled) override {
+         llm->set_flash_attention_enabled(enabled);
++        if (cliproj) {
++            cliproj->set_flash_attention_enabled(enabled);
++        }
+         if (ph3_connector) {
+             ph3_connector->set_flash_attention_enabled(enabled);
+         }
+@@ -2168,6 +2208,9 @@ struct LLMEmbedder : public Conditioner {
+ 
+     void set_scale_overrides(float linear_scale, float attn_scale) override {
+         llm->set_scale_overrides(linear_scale, attn_scale);
++        if (cliproj) {
++            cliproj->set_scale_overrides(linear_scale, attn_scale);
++        }
+         if (ph3_connector) {
+             ph3_connector->set_scale_overrides(linear_scale, attn_scale);
+         }
+@@ -2183,6 +2226,9 @@ struct LLMEmbedder : public Conditioner {
+         if (llm) {
+             llm->set_weight_adapter(adapter);
+         }
++        if (cliproj) {
++            cliproj->set_weight_adapter(adapter);
++        }
+         if (byt5) {
+             byt5->set_weight_adapter(adapter);
+         }
+@@ -2195,6 +2241,9 @@ struct LLMEmbedder : public Conditioner {
+         if (llm) {
+             llm->runner_end();
+         }
++        if (cliproj) {
++            cliproj->runner_end();
++        }
+         if (byt5) {
+             byt5->runner_end();
+         }
+@@ -2605,7 +2654,11 @@ struct LLMEmbedder : public Conditioner {
+         if (sd_version_is_minimax_h3(version)) {
+             prompt_template_encode_start_idx = 0;
+             // The final tap is normalized; LLMRunner exposes it at num_layers + 1.
+-            out_layers        = ph3_connector ? std::set<int>{13, 19, 25, 31, 37} : std::set<int>{50};
++            if (cliproj && cliproj->is_enabled()) {
++                out_layers = {cliproj->get_tap()};
++            } else {
++                out_layers = ph3_connector ? std::set<int>{13, 19, 25, 31, 37} : std::set<int>{50};
++            }
+             prompt_attn_range = {0, 0};
+ 
+             if (llm->enable_vision) {
+@@ -2725,6 +2778,12 @@ struct LLMEmbedder : public Conditioner {
+                 }
+             }
+             prompt += text;
++            if (prompt.empty()) {
++                // MiniMax-H3 uses the raw Qwen prompt instead of a chat template.
++                // CFG commonly supplies an empty negative prompt, which must still
++                // produce one token for the LLM attention graph.
++                prompt = "<|endoftext|>";
++            }
+         } else if (sd_version_is_hunyuan_video(version)) {
+             prompt_template_encode_start_idx = 98;
+             out_layers                       = {26};
+@@ -3390,6 +3449,13 @@ struct LLMEmbedder : public Conditioner {
+         if (hidden_states.empty()) {
+             return {};
+         }
++        if (cliproj && cliproj->is_enabled()) {
++            hidden_states = cliproj->compute(n_threads, hidden_states, true);
++            if (hidden_states.empty()) {
++                LOG_ERROR("ClipProj compute failed");
++                return {};
++            }
++        }
+         std::vector<sd::Tensor<float>> extra_hidden_states_vec;
+         if (sd_version_is_hunyuan_video(version) && byt5) {
+             std::vector<std::string> quoted_texts;
+diff --git a/src/config.h b/src/config.h
+index 7331ccc..fb8de09 100644
+--- a/src/config.h
++++ b/src/config.h
+@@ -120,6 +120,7 @@ namespace sd {
+         const char* t5xxl_path{};
+         const char* llm_path{};
+         const char* llm_vision_path{};
++        const char* cliproj_path{};
+         const char* diffusion_model_path{};
+         const char* high_noise_diffusion_model_path{};
+         const char* uncond_diffusion_model_path{};
+diff --git a/src/core/backend_fit.cpp b/src/core/backend_fit.cpp
+index 123894d..4572334 100644
+--- a/src/core/backend_fit.cpp
++++ b/src/core/backend_fit.cpp
+@@ -91,6 +91,7 @@ namespace sd::backend_fit {
+             contains("conditioner") ||
+             name.rfind("text_encoder.", 0) == 0 ||
+             name.rfind("text_embedding_projection.", 0) == 0 ||
++            name.rfind("cliproj.", 0) == 0 ||
+             contains(".aggregate_embed.")) {
+             out = ComponentKind::CONDITIONER;
+             return true;
+diff --git a/src/model/adapter/cliproj.hpp b/src/model/adapter/cliproj.hpp
+new file mode 100644
+index 0000000..5cd699d
+--- /dev/null
++++ b/src/model/adapter/cliproj.hpp
+@@ -0,0 +1,263 @@
++#ifndef __SD_MODEL_ADAPTER_CLIPROJ_HPP__
++#define __SD_MODEL_ADAPTER_CLIPROJ_HPP__
++
++#include <map>
++#include <memory>
++#include <string>
++
++#include "core/ggml_extend.h"
++#include "core/ggml_extend_backend.h"
++#include "core/ggml_runner.h"
++#include "core/ggml_tensor_utils.h"
++#include "core/util.h"
++#include "model/common/ggml_block.hpp"
++#include "model_loader.h"
++#include "model_manager.h"
++
++// ClipProj replaces the large text encoder of a diffusion model with a small
++// one plus a learned linear projection into the large encoder's conditioning
++// space. The published matrices target MiniMax-H3: a Qwen3-VL-4B (2560 dims)
++// or 8B (4096 dims) hidden state, taken at one layer ("tap"), is mapped to the
++// 5120-dim conditioning the DiT expects:
++//
++//     cond = (((h - mean_in) / std_in) @ W + mlp((h - mean_in) / std_in))
++//            * std_out + mean_out
++//
++// plus the attention-sink vector substituted at token 0. The file is a
++// .safetensors (or a GGUF with the "clipproj" architecture) holding mean_in,
++// std_in, mean_out, std_out and the scalar "tap" (layer index of the small
++// encoder to read). W (ridge matrix), the residual network mlp.0/mlp.2
++// weight/bias and sink_out are each optional: the plain ridge files carry W
++// and sink_out only, the v3 matrices dropped W after the residual network
++// subsumed the ridge fit and widened mlp.0 to 32768 hidden units, and v3.1
++// "-mlp" additionally dropped the measured sink vector. All variants are
++// detected from the file, with at least one of W or the residual network.
++namespace ClipProj {
++
++// The projection file stores W in PyTorch layout [d_in, d_out]. After the
++// safetensors reader reverses the axes the ggml shape is [d_out, d_in], so the
++// weight is declared transposed and materialised contiguously in the forward
++// pass, mirroring CLIPProjection's transpose_weight handling.
++    struct ClipProj : public GGMLBlock {
++    public:
++        int64_t d_in;
++        int64_t d_out;
++        int64_t mlp_hidden;
++        bool has_ridge = false;
++        bool has_sink   = false;
++
++        ClipProj(int64_t d_in_, int64_t d_out_, int64_t mlp_hidden_)
++            : d_in(d_in_), d_out(d_out_), mlp_hidden(mlp_hidden_) {
++            if (mlp_hidden > 0) {
++                blocks["mlp.0"] = std::make_shared<Linear>(d_in, mlp_hidden, true);
++                blocks["mlp.2"] = std::make_shared<Linear>(mlp_hidden, d_out, true);
++            }
++        }
++
++        bool has_residual() const { return mlp_hidden > 0; }
++
++        void init_params(ggml_context* ctx, const String2TensorStorage& tensor_storage_map = {}, const std::string prefix = "") override {
++            GGMLBlock::init_params(ctx, tensor_storage_map, prefix);
++            if (tensor_storage_map.find(prefix + "W") != tensor_storage_map.end()) {
++                has_ridge       = true;
++                enum ggml_type wtype = get_type(prefix + "W", tensor_storage_map, GGML_TYPE_F32);
++                if (d_in % ggml_blck_size(wtype) != 0) {
++                    wtype = GGML_TYPE_F32;
++                }
++                params["W"] = ggml_new_tensor_2d(ctx, wtype, d_out, d_in);
++            }
++            params["mean_in"]  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_in);
++            params["std_in"]   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_in);
++            params["mean_out"] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_out);
++            params["std_out"]  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_out);
++            if (tensor_storage_map.find(prefix + "sink_out") != tensor_storage_map.end()) {
++                has_sink        = true;
++                params["sink_out"] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d_out);
++            }
++        }
++
++        ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
++            // x: [d_in, n_token]
++            // Standardised space, where the ridge was fitted.
++            auto xn = ggml_div(ctx->ggml_ctx,
++                               ggml_sub(ctx->ggml_ctx, x, params["mean_in"]),
++                               params["std_in"]);  // [d_in, n_token]
++
++            ggml_tensor* sum = nullptr;
++            if (has_residual()) {
++                // The residual network keeps the dtype it was saved in (fp16 in the
++                // published matrices); inputs and outputs are converted around it.
++                auto mlp0 = std::dynamic_pointer_cast<Linear>(blocks["mlp.0"]);
++                auto mlp2 = std::dynamic_pointer_cast<Linear>(blocks["mlp.2"]);
++                auto res  = mlp2->forward(ctx,
++                                          ggml_gelu(ctx->ggml_ctx,
++                                                    mlp0->forward(ctx,
++                                                                  ggml_cast(ctx->ggml_ctx, xn, GGML_TYPE_F16))));
++                sum       = ggml_cast(ctx->ggml_ctx, res, GGML_TYPE_F32);
++            }
++            if (has_ridge) {
++                auto w  = ggml_cont(ctx->ggml_ctx, ggml_transpose(ctx->ggml_ctx, params["W"]));
++                auto yn = ggml_ext_linear(ctx, xn, w, nullptr);  // [d_out, n_token]
++                sum     = sum == nullptr ? yn : ggml_add(ctx->ggml_ctx, yn, sum);
++            }
++            GGML_ASSERT(sum != nullptr);
++            auto cond = ggml_add(ctx->ggml_ctx,
++                                 ggml_mul(ctx->ggml_ctx, sum, params["std_out"]),
++                                 params["mean_out"]);  // [d_out, n_token]
++
++            // Token 0 is an attention sink: its direction is constant across
++            // prompts, so substituting its measured value is exact rather than
++            // approximate. The calibration excluded it from the fit because its
++            // extreme norm would wreck the statistics. The v3.1 matrices ship
++            // without the measured sink and skip the substitution.
++            if (!has_sink) {
++                return cond;
++            }
++            if (x->ne[1] > 1) {
++                auto head = ggml_reshape_2d(ctx->ggml_ctx, params["sink_out"], d_out, 1);
++                auto tail = ggml_ext_slice(ctx, cond, 1, 1, x->ne[1]);
++                return ggml_concat(ctx->ggml_ctx, head, tail, 1);
++            }
++            return ggml_reshape_2d(ctx->ggml_ctx, params["sink_out"], d_out, 1);
++        }
++    };
++
++    struct ClipProjRunner : public GGMLRunner {
++        ClipProj model;
++        int tap = 24;
++        bool enabled = true;
++
++        struct Dims {
++            int64_t d_in;
++            int64_t d_out;
++            int64_t mlp_hidden;
++        };
++
++        static Dims infer_dims(const String2TensorStorage& tensor_storage_map,
++                               const std::string& prefix) {
++            // The file stores weights as torch [rows, cols]; the readers reverse the
++            // axes, so ggml ne[0] is the torch last dim. mean_in / mean_out carry
++            // d_in / d_out in every variant, with or without W.
++            auto mean_in  = tensor_storage_map.find(prefix + ".mean_in");
++            auto mean_out = tensor_storage_map.find(prefix + ".mean_out");
++            for (const char* name : {"std_in", "std_out"}) {
++                if (tensor_storage_map.find(prefix + "." + name) == tensor_storage_map.end()) {
++                    LOG_ERROR("cliproj: projection file has no '%s.%s' tensor", prefix.c_str(), name);
++                    return {0, 0, 0};
++                }
++            }
++            if (mean_in == tensor_storage_map.end() || mean_out == tensor_storage_map.end()) {
++                LOG_ERROR("cliproj: projection file has no '%s.mean_in' or '%s.mean_out' tensor",
++                          prefix.c_str(), prefix.c_str());
++                return {0, 0, 0};
++            }
++            const int64_t d_in  = mean_in->second.ne[0];
++            const int64_t d_out = mean_out->second.ne[0];
++
++            auto w    = tensor_storage_map.find(prefix + ".W");
++            auto mlp0 = tensor_storage_map.find(prefix + ".mlp.0.weight");
++            auto mlp2 = tensor_storage_map.find(prefix + ".mlp.2.weight");
++            const bool has_mlp0 = mlp0 != tensor_storage_map.end();
++            const bool has_mlp2 = mlp2 != tensor_storage_map.end();
++            if (has_mlp0 != has_mlp2) {
++                LOG_ERROR("cliproj: projection file has only one of '%s.mlp.0.weight' and '%s.mlp.2.weight'",
++                          prefix.c_str(), prefix.c_str());
++                return {0, 0, 0};
++            }
++            if (w == tensor_storage_map.end() && !has_mlp0) {
++                LOG_ERROR("cliproj: projection file has neither '%s.W' nor a residual network", prefix.c_str());
++                return {0, 0, 0};
++            }
++            if (w != tensor_storage_map.end() && (w->second.ne[1] != d_in || w->second.ne[0] != d_out)) {
++                LOG_ERROR("cliproj: W is [%lld, %lld] but mean_in/mean_out say [%lld, %lld]",
++                          static_cast<long long>(w->second.ne[1]), static_cast<long long>(w->second.ne[0]),
++                          static_cast<long long>(d_in), static_cast<long long>(d_out));
++                return {0, 0, 0};
++            }
++            int64_t mlp_hidden = 0;
++            if (has_mlp0) {
++                mlp_hidden = mlp0->second.ne[1];
++                if (mlp0->second.ne[0] != d_in || mlp2->second.ne[0] != mlp_hidden || mlp2->second.ne[1] != d_out) {
++                    LOG_ERROR("cliproj: residual network shapes disagree with mean_in/mean_out");
++                    return {0, 0, 0};
++                }
++            }
++            return {d_in, d_out, mlp_hidden};
++        }
++
++    public:
++        ClipProjRunner(ggml_backend_t backend,
++                       const String2TensorStorage& tensor_storage_map,
++                       const std::string prefix,
++                       int tap_,
++                       std::shared_ptr<RunnerWeightManager> weight_manager = nullptr)
++            : ClipProjRunner(backend, tensor_storage_map, prefix, tap_, weight_manager,
++                             infer_dims(tensor_storage_map, prefix)) {
++        }
++
++        std::string get_desc() override {
++            return "cliproj";
++        }
++
++        int get_tap() const { return tap; }
++
++        int64_t get_d_in() const { return model.d_in; }
++
++        bool is_enabled() const { return enabled; }
++
++        void set_enabled(bool enabled_) { enabled = enabled_; }
++
++        void get_param_tensors(std::map<std::string, ggml_tensor*>& tensors, const std::string prefix) {
++            model.get_param_tensors(tensors, prefix);
++        }
++
++        void get_param_tensor_ops(std::map<ggml_tensor*, enum ggml_op>& tensor_ops) {
++            model.get_param_tensor_ops(tensor_ops);
++        }
++
++        ggml_cgraph* build_graph(const sd::Tensor<float>& x_tensor) {
++            ggml_cgraph* gf = ggml_new_graph(compute_ctx);
++            auto x          = make_input(x_tensor);
++            auto runner_ctx = get_context();
++            auto out        = model.forward(&runner_ctx, x);
++            ggml_build_forward_expand(gf, out);
++            return gf;
++        }
++
++        sd::Tensor<float> compute(int n_threads,
++                                  const sd::Tensor<float>& x,
++                                  bool auto_runner_end = true) {
++            auto get_graph = [&]() -> ggml_cgraph* {
++                return build_graph(x);
++            };
++            return restore_trailing_singleton_dims(GGMLRunner::compute(get_graph, n_threads, auto_runner_end), 2);
++        }
++
++    private:
++        ClipProjRunner(ggml_backend_t backend,
++                       const String2TensorStorage& tensor_storage_map,
++                       const std::string prefix,
++                       int tap_,
++                       std::shared_ptr<RunnerWeightManager> weight_manager,
++                       Dims dims)
++            : GGMLRunner(backend, weight_manager),
++              model(dims.d_in, dims.d_out, dims.mlp_hidden),
++              tap(tap_) {
++            if (dims.d_in <= 0 || dims.d_out <= 0) {
++                enabled = false;
++                return;
++            }
++            model.init(params_ctx, tensor_storage_map, prefix);
++            LOG_INFO("cliproj: d_in=%lld d_out=%lld mlp_hidden=%lld ridge=%d sink=%d tap=%d",
++                     static_cast<long long>(model.d_in),
++                     static_cast<long long>(model.d_out),
++                     static_cast<long long>(model.mlp_hidden),
++                     model.has_ridge ? 1 : 0,
++                     model.has_sink ? 1 : 0,
++                     tap);
++        }
++    };
++
++}  // namespace ClipProj
++
++#endif  // __SD_MODEL_ADAPTER_CLIPROJ_HPP__
+diff --git a/src/model/integrations/minimax_h3.cpp b/src/model/integrations/minimax_h3.cpp
+index c4a7ae8..3b8f0bf 100644
+--- a/src/model/integrations/minimax_h3.cpp
++++ b/src/model/integrations/minimax_h3.cpp
+@@ -1,5 +1,6 @@
+ #include "model/diffusion/minimax_h3.hpp"
+ #include "conditioning/conditioner.hpp"
++#include "model/adapter/cliproj.hpp"
+ #include "model_definition.h"
+ #include "pipeline/model_builders.h"
+ 
+@@ -8,18 +9,27 @@ static bool build_minimax_h3(const sd::model_builders::Context& ctx, const Token
+     const auto& tensor_storage_map = ctx.tensor_storage_map;
+     const auto version             = ctx.version;
+     const auto& weight_manager     = ctx.weight_manager;
+-    result.conditioner             = std::make_shared<LLMEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
+-                                                                   tensor_storage_map,
+-                                                                   version,
+-                                                                   "",
+-                                                                   true,
+-                                                                   weight_manager,
+-                                                                   tokenizers);
+-    result.diffusion               = std::make_shared<MiniMaxH3::MiniMaxH3Runner>(ctx.backends.runtime_backend(SDBackendModule::DIFFUSION),
+-                                                                                  tensor_storage_map,
+-                                                                                  "model.diffusion_model",
+-                                                                                  weight_manager,
+-                                                                                  sd_ctx_params->model_args);
++    std::shared_ptr<ClipProj::ClipProjRunner> cliproj_runner;
++    if (!ctx.cliproj_path.empty()) {
++        cliproj_runner = std::make_shared<ClipProj::ClipProjRunner>(ctx.backends.runtime_backend(SDBackendModule::TE),
++                                                                    tensor_storage_map,
++                                                                    "cliproj",
++                                                                    ctx.cliproj_tap,
++                                                                    weight_manager);
++    }
++    result.conditioner = std::make_shared<LLMEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
++                                                       tensor_storage_map,
++                                                       version,
++                                                       "",
++                                                       true,
++                                                       weight_manager,
++                                                       tokenizers,
++                                                       cliproj_runner);
++    result.diffusion   = std::make_shared<MiniMaxH3::MiniMaxH3Runner>(ctx.backends.runtime_backend(SDBackendModule::DIFFUSION),
++                                                                      tensor_storage_map,
++                                                                      "model.diffusion_model",
++                                                                      weight_manager,
++                                                                      sd_ctx_params->model_args);
+     return true;
+ }
+ 
+diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
+index c2ae6b8..33c55c6 100644
+--- a/src/pipeline/diffusion_engine.cpp
++++ b/src/pipeline/diffusion_engine.cpp
+@@ -23,6 +23,7 @@
+ #include "core/layer_split_partition.h"
+ #include "core/probe/conv_direct.h"
+ #include "core/probe/flash_attn.h"
++#include "model_io/gguf_io.h"
+ #include "model.h"
+ #include "model_definition.h"
+ 
+@@ -49,6 +50,7 @@
+ #include "model/diffusion/model.hpp"
+ #include "model/diffusion/z_image.hpp"
+ #include "model/vae/audio_vae.hpp"
++#include "model_io/safetensors_io.h"
+ #include "model/vae/ltx_vae.hpp"
+ #include "model/vae/vae.hpp"
+ #include "runtime/audio_processing.h"
+@@ -764,6 +766,31 @@ bool StableDiffusionGGML::init_model_loader(ModelLoader& model_loader, ModelConf
+         }
+     }
+ 
++    if (strlen(SAFE_STR(sd_ctx_params->cliproj_path)) > 0) {
++        LOG_INFO("loading cliproj from '%s'", sd_ctx_params->cliproj_path);
++        cliproj_path = sd_ctx_params->cliproj_path;
++        cliproj_tap  = 24;
++        if (load_model("cliproj", sd_ctx_params->cliproj_path, "cliproj.")) {
++            if (is_safetensors_file(sd_ctx_params->cliproj_path)) {
++                auto tap_it = model_loader.get_metadata().find("tap");
++                if (tap_it != model_loader.get_metadata().end()) {
++                    cliproj_tap = std::atoi(tap_it->second.c_str());
++                }
++            } else if (is_gguf_file(sd_ctx_params->cliproj_path)) {
++                int64_t gguf_tap = 0;
++                if (read_gguf_int_metadata(sd_ctx_params->cliproj_path, "clipproj.tap", &gguf_tap)) {
++                    cliproj_tap = static_cast<int>(gguf_tap);
++                } else {
++                    LOG_WARN("cliproj GGUF has no integer 'clipproj.tap' key; using tap %d", cliproj_tap);
++                }
++            }
++            LOG_INFO("cliproj tap = %d", cliproj_tap);
++        } else {
++            LOG_WARN("loading cliproj from '%s' failed", sd_ctx_params->cliproj_path);
++            cliproj_path.clear();
++        }
++    }
++
+     if (strlen(SAFE_STR(sd_ctx_params->vae_path)) > 0) {
+         LOG_INFO("loading vae from '%s'", sd_ctx_params->vae_path);
+         if (!load_model("vae", sd_ctx_params->vae_path, "vae.")) {
+@@ -982,6 +1009,11 @@ bool StableDiffusionGGML::init(const sd::ContextConfig* sd_ctx_params) {
+         LOG_INFO("Version: %s ", sd_version_name(version));
+     }
+ 
++    if (!cliproj_path.empty() && !sd_version_is_minimax_h3(version)) {
++        LOG_WARN("cliproj is only supported for MiniMax-H3; ignoring");
++        cliproj_path.clear();
++    }
++
+     if (auto_fit_enabled) {
+         if (!sd::backend_fit::derive_backend_specs(model_loader,
+                                                    sd_type_to_ggml_type(sd_ctx_params->wtype),
+@@ -1073,7 +1105,7 @@ void StableDiffusionGGML::configure_weight_loading() {
+         apply_lora_immediately = false;
+     }
+ 
+-    bool needs_writable_mmap = enable_mmap && apply_lora_immediately;
++    bool needs_writable_mmap = enable_mmap && (apply_lora_immediately || sd_version_is_krea2(version));
+     model_manager->set_writable_mmap(needs_writable_mmap);
+     if (enable_mmap && apply_lora_immediately) {
+         LOG_WARN("in mode 'immediately', LoRAs will cause extra memory usage with mmap");
+@@ -1083,7 +1115,7 @@ void StableDiffusionGGML::configure_weight_loading() {
+ }
+ 
+ sd::model_builders::Context StableDiffusionGGML::model_build_context() {
+-    return {config_->params, version, model_manager->loader().get_tensor_storage_map(), backend_manager, model_manager};
++    return {config_->params, version, model_manager->loader().get_tensor_storage_map(), backend_manager, model_manager, cliproj_path, cliproj_tap};
+ }
+ 
+ bool StableDiffusionGGML::build_core_runners() {
+@@ -1109,6 +1141,9 @@ bool StableDiffusionGGML::build_core_runners() {
+     if (audio_encoder) {
+         audio_encoder->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::AUDIO_ENCODER));
+     }
++    if (model_manager) {
++        model_manager->set_param_transform(ModelComponent::Diffusion, diffusion_model->get_param_transform());
++    }
+     return register_runner_params(ModelComponent::Conditioner, cond_stage_model, SDBackendModule::TE) &&
+            register_runner_params(ModelComponent::Diffusion, diffusion_model, SDBackendModule::DIFFUSION) &&
+            register_runner_params(ModelComponent::HighNoiseDiffusion, high_noise_diffusion_model, SDBackendModule::DIFFUSION) &&
+@@ -1135,6 +1170,10 @@ bool StableDiffusionGGML::build_vae_runners() {
+     if (preview_vae) {
+         preview_vae->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::VAE));
+     }
++    if (sd_version_is_krea2(version) && sd_backend_is(backend_manager.runtime_backend(SDBackendModule::VAE), "Vulkan")) {
++        LOG_INFO("Using Conv2d direct in the Krea2 Vulkan VAE");
++        first_stage_model->set_conv2d_direct_enabled(true);
++    }
+     return register_runner_params(ModelComponent::VAE, first_stage_model, SDBackendModule::VAE) &&
+            register_runner_params(ModelComponent::PreviewVAE, preview_vae, SDBackendModule::VAE) &&
+            register_runner_params(ModelComponent::AudioVAE, audio_vae_model, SDBackendModule::VAE);
+diff --git a/src/pipeline/diffusion_engine.h b/src/pipeline/diffusion_engine.h
+index ae05dc9..365cf70 100644
+--- a/src/pipeline/diffusion_engine.h
++++ b/src/pipeline/diffusion_engine.h
+@@ -115,6 +115,9 @@ public:
+     std::string split_mode_spec;
+     bool auto_fit_enabled = false;
+ 
++    std::string cliproj_path;
++    int cliproj_tap = 24;
++
+     bool diffusion_conv_direct = false;
+ 
+     bool is_using_v_parameterization     = false;
+@@ -144,7 +147,8 @@ public:
+             for (auto member : {&sd::ContextConfig::model_path, &sd::ContextConfig::clip_l_path,
+                                 &sd::ContextConfig::clip_g_path, &sd::ContextConfig::clip_vision_path,
+                                 &sd::ContextConfig::t5xxl_path, &sd::ContextConfig::llm_path,
+-                                &sd::ContextConfig::llm_vision_path, &sd::ContextConfig::diffusion_model_path,
++                                &sd::ContextConfig::llm_vision_path, &sd::ContextConfig::cliproj_path,
++                                &sd::ContextConfig::diffusion_model_path,
+                                 &sd::ContextConfig::tokenizer, &sd::ContextConfig::flash_attn_mode, &sd::ContextConfig::conv_direct_mode,
+                                 &sd::ContextConfig::high_noise_diffusion_model_path, &sd::ContextConfig::uncond_diffusion_model_path,
+                                 &sd::ContextConfig::embeddings_connectors_path, &sd::ContextConfig::vae_path,
+diff --git a/src/pipeline/model_builders.h b/src/pipeline/model_builders.h
+index 1f56e4a..1d3a73e 100644
+--- a/src/pipeline/model_builders.h
++++ b/src/pipeline/model_builders.h
+@@ -34,6 +34,8 @@ namespace sd::model_builders {
+         const String2TensorStorage& tensor_storage_map;
+         SDBackendManager& backends;
+         std::shared_ptr<DeviceResidencyManager> weight_manager;
++        std::string cliproj_path;
++        int cliproj_tap = 24;
+     };
+ 
+     struct CoreRunners {

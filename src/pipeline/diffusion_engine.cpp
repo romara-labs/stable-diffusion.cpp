@@ -23,7 +23,6 @@
 #include "core/layer_split_partition.h"
 #include "core/probe/conv_direct.h"
 #include "core/probe/flash_attn.h"
-#include "model_io/gguf_io.h"
 #include "model.h"
 #include "model_definition.h"
 
@@ -50,7 +49,6 @@
 #include "model/diffusion/model.hpp"
 #include "model/diffusion/z_image.hpp"
 #include "model/vae/audio_vae.hpp"
-#include "model_io/safetensors_io.h"
 #include "model/vae/ltx_vae.hpp"
 #include "model/vae/vae.hpp"
 #include "runtime/audio_processing.h"
@@ -766,31 +764,6 @@ bool StableDiffusionGGML::init_model_loader(ModelLoader& model_loader, ModelConf
         }
     }
 
-    if (strlen(SAFE_STR(sd_ctx_params->cliproj_path)) > 0) {
-        LOG_INFO("loading cliproj from '%s'", sd_ctx_params->cliproj_path);
-        cliproj_path = sd_ctx_params->cliproj_path;
-        cliproj_tap  = 24;
-        if (load_model("cliproj", sd_ctx_params->cliproj_path, "cliproj.")) {
-            if (is_safetensors_file(sd_ctx_params->cliproj_path)) {
-                auto tap_it = model_loader.get_metadata().find("tap");
-                if (tap_it != model_loader.get_metadata().end()) {
-                    cliproj_tap = std::atoi(tap_it->second.c_str());
-                }
-            } else if (is_gguf_file(sd_ctx_params->cliproj_path)) {
-                int64_t gguf_tap = 0;
-                if (read_gguf_int_metadata(sd_ctx_params->cliproj_path, "clipproj.tap", &gguf_tap)) {
-                    cliproj_tap = static_cast<int>(gguf_tap);
-                } else {
-                    LOG_WARN("cliproj GGUF has no integer 'clipproj.tap' key; using tap %d", cliproj_tap);
-                }
-            }
-            LOG_INFO("cliproj tap = %d", cliproj_tap);
-        } else {
-            LOG_WARN("loading cliproj from '%s' failed", sd_ctx_params->cliproj_path);
-            cliproj_path.clear();
-        }
-    }
-
     if (strlen(SAFE_STR(sd_ctx_params->vae_path)) > 0) {
         LOG_INFO("loading vae from '%s'", sd_ctx_params->vae_path);
         if (!load_model("vae", sd_ctx_params->vae_path, "vae.")) {
@@ -1009,11 +982,6 @@ bool StableDiffusionGGML::init(const sd::ContextConfig* sd_ctx_params) {
         LOG_INFO("Version: %s ", sd_version_name(version));
     }
 
-    if (!cliproj_path.empty() && !sd_version_is_minimax_h3(version)) {
-        LOG_WARN("cliproj is only supported for MiniMax-H3; ignoring");
-        cliproj_path.clear();
-    }
-
     if (auto_fit_enabled) {
         if (!sd::backend_fit::derive_backend_specs(model_loader,
                                                    sd_type_to_ggml_type(sd_ctx_params->wtype),
@@ -1105,7 +1073,7 @@ void StableDiffusionGGML::configure_weight_loading() {
         apply_lora_immediately = false;
     }
 
-    bool needs_writable_mmap = enable_mmap && (apply_lora_immediately || sd_version_is_krea2(version));
+    bool needs_writable_mmap = enable_mmap && apply_lora_immediately;
     model_manager->set_writable_mmap(needs_writable_mmap);
     if (enable_mmap && apply_lora_immediately) {
         LOG_WARN("in mode 'immediately', LoRAs will cause extra memory usage with mmap");
@@ -1115,7 +1083,7 @@ void StableDiffusionGGML::configure_weight_loading() {
 }
 
 sd::model_builders::Context StableDiffusionGGML::model_build_context() {
-    return {config_->params, version, model_manager->loader().get_tensor_storage_map(), backend_manager, model_manager, cliproj_path, cliproj_tap};
+    return {config_->params, version, model_manager->loader().get_tensor_storage_map(), backend_manager, model_manager};
 }
 
 bool StableDiffusionGGML::build_core_runners() {
@@ -1140,9 +1108,6 @@ bool StableDiffusionGGML::build_core_runners() {
     }
     if (audio_encoder) {
         audio_encoder->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::AUDIO_ENCODER));
-    }
-    if (model_manager) {
-        model_manager->set_param_transform(ModelComponent::Diffusion, diffusion_model->get_param_transform());
     }
     return register_runner_params(ModelComponent::Conditioner, cond_stage_model, SDBackendModule::TE) &&
            register_runner_params(ModelComponent::Diffusion, diffusion_model, SDBackendModule::DIFFUSION) &&
@@ -1169,10 +1134,6 @@ bool StableDiffusionGGML::build_vae_runners() {
     first_stage_model->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::VAE));
     if (preview_vae) {
         preview_vae->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::VAE));
-    }
-    if (sd_version_is_krea2(version) && sd_backend_is(backend_manager.runtime_backend(SDBackendModule::VAE), "Vulkan")) {
-        LOG_INFO("Using Conv2d direct in the Krea2 Vulkan VAE");
-        first_stage_model->set_conv2d_direct_enabled(true);
     }
     return register_runner_params(ModelComponent::VAE, first_stage_model, SDBackendModule::VAE) &&
            register_runner_params(ModelComponent::PreviewVAE, preview_vae, SDBackendModule::VAE) &&

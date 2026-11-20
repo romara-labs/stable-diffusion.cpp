@@ -420,11 +420,6 @@ ArgOptions SDContextParams::get_options() {
          0,
          &llm_vision_path},
         {"",
-         "--cliproj",
-         "path to a MiniMax-H3 ClipProj projection matrix (.safetensors or clipproj .gguf)",
-         0,
-         &cliproj_path},
-        {"",
          "--qwen2vl",
          "alias of --llm. Deprecated.",
          0,
@@ -933,7 +928,6 @@ std::string SDContextParams::to_string() const {
         << "  t5xxl_path: \"" << t5xxl_path << "\",\n"
         << "  llm_path: \"" << llm_path << "\",\n"
         << "  llm_vision_path: \"" << llm_vision_path << "\",\n"
-        << "  cliproj_path: \"" << cliproj_path << "\",\n"
         << "  tokenizer: \"" << tokenizer << "\",\n"
         << "  diffusion_model_path: \"" << diffusion_model_path << "\",\n"
         << "  high_noise_diffusion_model_path: \"" << high_noise_diffusion_model_path << "\",\n"
@@ -1004,7 +998,6 @@ SDOptPtr SDContextParams::to_context_opt() {
     opt.set_string("t5xxl_path", t5xxl_path);
     opt.set_string("llm_path", llm_path);
     opt.set_string("llm_vision_path", llm_vision_path);
-    opt.set_string("cliproj_path", cliproj_path);
     opt.set_string("tokenizer", tokenizer);
     opt.set_string("diffusion_model_path", diffusion_model_path);
     opt.set_string("high_noise_diffusion_model_path", high_noise_diffusion_model_path);

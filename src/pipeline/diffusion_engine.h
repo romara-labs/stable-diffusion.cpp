@@ -115,9 +115,6 @@ public:
     std::string split_mode_spec;
     bool auto_fit_enabled = false;
 
-    std::string cliproj_path;
-    int cliproj_tap = 24;
-
     bool diffusion_conv_direct = false;
 
     bool is_using_v_parameterization     = false;
@@ -147,8 +144,7 @@ public:
             for (auto member : {&sd::ContextConfig::model_path, &sd::ContextConfig::clip_l_path,
                                 &sd::ContextConfig::clip_g_path, &sd::ContextConfig::clip_vision_path,
                                 &sd::ContextConfig::t5xxl_path, &sd::ContextConfig::llm_path,
-                                &sd::ContextConfig::llm_vision_path, &sd::ContextConfig::cliproj_path,
-                                &sd::ContextConfig::diffusion_model_path,
+                                &sd::ContextConfig::llm_vision_path, &sd::ContextConfig::diffusion_model_path,
                                 &sd::ContextConfig::tokenizer, &sd::ContextConfig::flash_attn_mode, &sd::ContextConfig::conv_direct_mode,
                                 &sd::ContextConfig::high_noise_diffusion_model_path, &sd::ContextConfig::uncond_diffusion_model_path,
                                 &sd::ContextConfig::embeddings_connectors_path, &sd::ContextConfig::vae_path,

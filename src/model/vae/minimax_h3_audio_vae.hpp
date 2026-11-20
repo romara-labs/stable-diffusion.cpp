@@ -468,7 +468,7 @@ namespace MiniMaxH3 {
                 return graph;
             };
             auto result = restore_trailing_singleton_dims(
-                GGMLRunner::compute(get_graph, n_threads, true),
+                GGMLRunner::compute(get_graph, n_threads, false),
                 4);
             int64_t t1 = ggml_time_ms();
             LOG_INFO("MiniMax-H3 audio VAE encode completed, taking %.2fs",
@@ -488,7 +488,7 @@ namespace MiniMaxH3 {
                 return graph;
             };
             auto result = restore_trailing_singleton_dims(
-                GGMLRunner::compute(get_graph, n_threads, true),
+                GGMLRunner::compute(get_graph, n_threads, false),
                 4);
             int64_t t1 = ggml_time_ms();
             LOG_INFO("MiniMax-H3 audio VAE decode completed, taking %.2fs",

@@ -33,15 +33,6 @@ separately, pass it with `--llm_vision`.
 
 Use the P-H3 image VAE; the MiniMax-H3 video VAE is not compatible. No audio VAE is needed.
 
-### ClipProj alternative
-
-Instead of the text connector, a small Qwen3-VL (4B or 8B) can be paired with a
-ClipProj matrix through `--cliproj`; see
-[Replacing the text encoder with a small one](minimax_h3.md#replacing-the-text-encoder-with-a-small-one-clipproj).
-ClipProj takes precedence over the connector when both are supplied. The
-published matrices were calibrated for MiniMax-H3 video prompts, so image
-quality is not validated.
-
 ## Usage
 
 CLI examples use the [shared path and shell conventions](README.md#example-conventions).

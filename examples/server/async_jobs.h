@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
+
 #include "runtime.h"
 
 enum class AsyncJobKind {
@@ -62,9 +63,9 @@ struct AsyncGenerationJob {
     AsyncJobProgress progress;
     mutable std::mutex preview_mutex;
     std::string preview_b64;
-    int preview_pass        = 0;
-    int preview_step        = 0;
-    int preview_total_steps = 0;
+    int preview_pass          = 0;
+    int preview_step          = 0;
+    int preview_total_steps   = 0;
 };
 
 struct AsyncJobManager {
@@ -97,7 +98,5 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
                          int& output_frame_count,
                          int& output_fps,
                          json& output_info,
-                         std::string& error_message,
-                         sd_progress_cb_t progress_callback = nullptr,
-                         void* progress_callback_data       = nullptr);
+                         std::string& error_message);
 void async_job_worker(ServerRuntime& runtime);

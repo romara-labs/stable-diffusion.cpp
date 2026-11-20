@@ -5,7 +5,10 @@
 #include <cctype>
 #include <climits>
 #include <filesystem>
+#include <functional>
 #include <iostream>
+#include <map>
+#include <random>
 #include <regex>
 #include <sstream>
 #include <string>
